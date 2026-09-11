@@ -4,15 +4,19 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "DualKey off-chain CLI: keygen, signing, and transaction submission"
+description = "DualKey off-chain CLI: keygen, dual-scheme signing, and verification"
 repository.workspace = true
+
+[lib]
+name = "dualkey_client"
+path = "src/lib.rs"
 
 [[bin]]
 name = "dualkey"
 path = "src/main.rs"
 
 [dependencies]
-dualkey-core = { workspace = true, features = ["std"] }
+dualkey-core = { workspace = true, features = ["std", "sha2"] }
 clap = { workspace = true }
 sha2 = { workspace = true }
 thiserror = { workspace = true }
@@ -21,7 +25,15 @@ thiserror = { workspace = true }
 pqcrypto-falcon = { workspace = true }
 pqcrypto-traits = { workspace = true }
 
-# Ed25519 host signing (Milestone 1). Kept lightweight for Milestone 0 scaffolding.
-ed25519-dalek = { version = "2", features = ["rand_core"] }
+# Cross-implementation Falcon verification against the on-chain verifier.
+# This is the Milestone 1 interoperability gate.
+solana-falcon512 = { workspace = true }
+
+ed25519-dalek = "2"
 rand = "0.8"
 hex = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"

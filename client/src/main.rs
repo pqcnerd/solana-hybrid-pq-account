@@ -1,15 +1,9 @@
 //! DualKey CLI — hybrid Ed25519 + Falcon-512 smart-account client.
 //!
-//! Milestone 0: subcommands are wired but return an explicit "not implemented"
-//! status. Milestone 1 implements keygen / sign / verify.
-
-mod error;
-mod intent;
-mod keygen;
-mod sign;
-mod submit;
+//! Never prints secret key material.
 
 use clap::{Parser, Subcommand};
+use dualkey_client::{keygen, sign, submit};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -24,45 +18,44 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
-    /// Generate Ed25519 and Falcon-512 keypairs (Milestone 1).
+    /// Generate Ed25519 and Falcon-512 keypairs.
     Keygen {
         /// Output directory for key material.
         #[arg(long, default_value = "keys")]
         out: PathBuf,
     },
-    /// Sign a canonical authorization intent with both schemes (Milestone 1).
+    /// Sign a canonical authorization intent with both schemes.
     Sign {
-        /// Path to an intent description file.
+        /// Path to an intent JSON file.
         #[arg(long)]
         intent: PathBuf,
         /// Directory containing key material.
         #[arg(long, default_value = "keys")]
         keys: PathBuf,
+        /// Write the signed bundle here instead of stdout.
+        #[arg(long)]
+        out: Option<PathBuf>,
     },
-    /// Verify Ed25519 + Falcon signatures over an intent digest (Milestone 1).
+    /// Verify a signed bundle with Ed25519, PQClean Falcon, and the on-chain
+    /// Falcon verifier.
     Verify {
-        /// Path to signature bundle / intent file.
+        /// Path to a signed bundle JSON file.
         #[arg(long)]
         input: PathBuf,
     },
     /// Initialize a DualKey HybridAccount on-chain (Milestone 3).
     Init {
-        /// Key directory.
         #[arg(long, default_value = "keys")]
         keys: PathBuf,
-        /// Creator account index for PDA derivation.
         #[arg(long, default_value_t = 0)]
         account_index: u32,
     },
     /// Submit a hybrid-authorized SOL transfer (Milestone 7).
     Transfer {
-        /// Recipient pubkey (base58).
         #[arg(long)]
         to: String,
-        /// Lamports to transfer.
         #[arg(long)]
         lamports: u64,
-        /// Key directory.
         #[arg(long, default_value = "keys")]
         keys: PathBuf,
     },
@@ -72,7 +65,7 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
         Commands::Keygen { out } => keygen::run(&out),
-        Commands::Sign { intent, keys } => sign::run(&intent, &keys),
+        Commands::Sign { intent, keys, out } => sign::run(&intent, &keys, out.as_deref()),
         Commands::Verify { input } => sign::verify(&input),
         Commands::Init {
             keys,

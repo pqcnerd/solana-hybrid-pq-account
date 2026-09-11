@@ -46,6 +46,43 @@ pub const FLAG_RECOVERY_ENABLED: u8 = 1 << 0;
 /// `flags` bit 1: `falcon_required_above` field is set.
 pub const FLAG_FALCON_THRESHOLD_SET: u8 = 1 << 1;
 
+// ---------------------------------------------------------------------------
+// Compile-time layout guarantees.
+//
+// The prepared Falcon public key must occupy exactly the tail of the account
+// and must never be able to exceed the fixed account bounds. These assertions
+// fail the build (not a test run) if the layout is edited inconsistently.
+// ---------------------------------------------------------------------------
+
+/// The prepared-pubkey region ends exactly at the end of the account.
+const _: () = assert!(
+    offsets::PREPARED_FALCON_PUBLIC_KEY + PREPARED_FALCON_PUBKEY_LEN == ACCOUNT_DATA_LEN,
+    "prepared Falcon pubkey region must end exactly at the account boundary"
+);
+
+/// The region cannot overflow the account.
+const _: () = assert!(
+    offsets::PREPARED_FALCON_PUBLIC_KEY + PREPARED_FALCON_PUBKEY_LEN <= ACCOUNT_DATA_LEN,
+    "prepared Falcon pubkey region exceeds fixed account bounds"
+);
+
+/// The region starts after every header field (no overlap with the header).
+const _: () = assert!(
+    offsets::PREPARED_FALCON_PUBLIC_KEY >= offsets::RESERVED1 + 8,
+    "prepared Falcon pubkey region overlaps the account header"
+);
+
+/// `solana-falcon512` borrows the prepared pubkey zero-copy and requires at
+/// least 2-byte alignment. Solana account data is 8-byte aligned by ABI, so an
+/// 8-byte-aligned offset always satisfies it.
+const _: () = assert!(
+    offsets::PREPARED_FALCON_PUBLIC_KEY % 8 == 0,
+    "prepared Falcon pubkey offset must be 8-byte aligned for zero-copy borrow"
+);
+
+/// Prepared form is 512 u16 NTT coefficients.
+const _: () = assert!(PREPARED_FALCON_PUBKEY_LEN == 512 * 2);
+
 pub mod offsets {
     pub const VERSION: usize = 0;
     pub const BUMP: usize = 1;
@@ -247,6 +284,49 @@ mod tests {
             offsets::PREPARED_FALCON_PUBLIC_KEY + PREPARED_FALCON_PUBKEY_LEN,
             ACCOUNT_DATA_LEN
         );
+    }
+
+    /// The prepared-pubkey accessors must address exactly the intended region
+    /// and must not be able to read or write outside the fixed account bounds.
+    #[test]
+    fn prepared_pubkey_region_is_exact_and_bounded() {
+        let mut buf = [0u8; ACCOUNT_DATA_LEN];
+        // Mark the whole buffer, then overwrite only the prepared region.
+        buf.fill(0xAB);
+        {
+            let mut acct = HybridAccount::try_from_bytes(&mut buf).unwrap();
+            acct.prepared_falcon_public_key_mut().fill(0xCD);
+        }
+
+        // Header bytes (0..96) untouched.
+        assert!(
+            buf[..offsets::PREPARED_FALCON_PUBLIC_KEY]
+                .iter()
+                .all(|&b| b == 0xAB),
+            "writing the prepared pubkey must not touch the account header"
+        );
+        // Prepared region (96..1120) fully written.
+        assert!(
+            buf[offsets::PREPARED_FALCON_PUBLIC_KEY..]
+                .iter()
+                .all(|&b| b == 0xCD),
+            "prepared pubkey region must cover 96..1120 exactly"
+        );
+        // Region length is exactly the prepared-pubkey length.
+        assert_eq!(
+            buf.len() - offsets::PREPARED_FALCON_PUBLIC_KEY,
+            PREPARED_FALCON_PUBKEY_LEN
+        );
+    }
+
+    /// Falcon wire lengths that the client and program both rely on.
+    #[test]
+    fn falcon_length_constants() {
+        assert_eq!(FALCON_WIRE_PUBKEY_LEN, 897);
+        assert_eq!(FALCON_SIGNATURE_LEN, 666);
+        assert_eq!(PREPARED_FALCON_PUBKEY_LEN, 1024);
+        // Prepared form costs 127 extra bytes vs the wire pubkey.
+        assert_eq!(PREPARED_FALCON_PUBKEY_LEN - FALCON_WIRE_PUBKEY_LEN, 127);
     }
 
     #[test]

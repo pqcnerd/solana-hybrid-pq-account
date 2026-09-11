@@ -1,6 +1,10 @@
 # Canonical Authorization Intent
 
-**Status:** Specification (Milestone 0). Encoding implementation lands in Milestone 4.
+**Status:** Implemented in `dualkey-core` as of Milestone 1.
+
+The encoding was pulled forward from Milestone 4 because Milestone 1 requires
+both schemes to sign one digest built through the shared crate. Reconstruction
+of derivable fields on-chain remains a later milestone.
 
 Both Ed25519 and Falcon-512 MUST sign the exact same digest:
 
@@ -74,23 +78,45 @@ Remaining action tags are reserved (not encoded until later milestones):
 
 ## Shared preimage, separate hashers
 
-[`dualkey-core`](../core/) is hasher-agnostic and dependency-free. It will
-expose (Milestone 4):
+[`dualkey-core`](../core/) is hasher-agnostic and has no required
+dependencies. It exposes:
 
 ```rust
 pub fn canonical_preimage(intent: &AuthorizationIntent) -> [u8; CANONICAL_PREIMAGE_LEN];
+
+// Host only, behind the `sha2` feature:
+pub fn digest_preimage(preimage: &[u8; CANONICAL_PREIMAGE_LEN]) -> [u8; 32];
+pub fn canonical_digest(intent: &AuthorizationIntent) -> [u8; 32];
 ```
 
 Each consumer hashes those identical bytes with its own SHA-256:
 
 | Layer | Hasher | Reason |
 |-------|--------|--------|
-| Client | `sha2` crate | Portable host crypto |
+| Client | `sha2` crate (`sha2` feature) | Portable host crypto |
 | Program | `sol_sha256` syscall | Far cheaper compute units on SBF |
 
-A host test (Milestone 1 / 4) MUST assert that both hashers produce the same
-digest for the same preimage. This makes invariant 10 (“both schemes sign the
-exact same canonical intent”) true by construction.
+The program deliberately does **not** enable the `sha2` feature.
+
+### Known-answer vectors
+
+`dualkey-core` publishes cross-layer vectors so each layer can assert
+agreement without duplicating the fixture:
+
+| Constant | Value |
+|----------|-------|
+| `test_vector_intent()` | Deterministic fixture intent |
+| `TEST_VECTOR_PREIMAGE_PREFIX` | `0x11 ‖ "DUALKEY_SOLANA_V1" ‖ 0x01` |
+| `TEST_VECTOR_DIGEST` | `6182ba27c082b3e8110e47a2af27e0ece6f5eee8fcea6e7927e40707f8deb5ec` |
+
+Changing `TEST_VECTOR_DIGEST` is a breaking protocol change. Milestone 2 will
+assert the on-chain `sol_sha256` path reproduces the same value, closing
+invariant 10 across both layers.
+
+Covered by `client_sha256_agrees_with_core_test_vectors`, which also asserts
+that Ed25519 and Falcon verify over the 32-byte **digest** and explicitly
+**fail** over the 172-byte preimage — so neither scheme can be signing a
+different transform.
 
 ## On-chain reconstruction (transaction-size constraint)
 
@@ -159,11 +185,13 @@ override path when needed.
 
 Changing any single bit of the preimage MUST invalidate both signatures.
 
-## Implementation checklist (Milestone 4)
+## Implementation checklist
 
-- [ ] Implement `canonical_preimage` in `dualkey-core`
-- [ ] Client: `sha2::Sha256` over preimage
-- [ ] Program: `sol_sha256` over reconstructed preimage
-- [ ] Host test: hashers agree
-- [ ] Negative tests: one-bit flips fail both schemes
-- [ ] Measure serialized transaction size against the 1232-byte legacy limit
+- [x] Implement `canonical_preimage` in `dualkey-core` (Milestone 1)
+- [x] Client: `sha2::Sha256` over preimage (Milestone 1)
+- [x] Publish known-answer vectors (Milestone 1)
+- [x] Negative tests: one-bit flips fail both schemes (Milestone 1)
+- [ ] Program: `sol_sha256` over reconstructed preimage (Milestone 2+)
+- [ ] Cross-layer test: `sol_sha256` matches `TEST_VECTOR_DIGEST` (Milestone 2)
+- [ ] On-chain field reconstruction (Milestone 4)
+- [ ] Measure serialized transaction size against the 1232-byte legacy limit (Milestone 8)

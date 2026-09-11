@@ -65,6 +65,9 @@ This document does **not** claim formal security or quantum-proofness.
 | Oversized signatures | Fixed 666-byte buffer; reject wrong lengths |
 | Unverifiable Falcon pubkey registration | Any parsable 897-byte buffer can be “prepared”; under HybridAnd a bogus key **bricks** the account. Require Falcon **proof-of-possession** at init and on `RotateFalconKey` for the *new* key |
 | Never dedup by signature value | Falcon nonces make signatures non-unique; replay protection is the **nonce counter**, never a signature-set |
+| Non-zero signature padding | `solana-falcon512` requires all trailing bytes past the encoded signature to be zero; verified by `non_zero_padding_is_rejected` |
+| Signature length overrun | Compressed signatures are variable (647–663 observed over 10,000 samples, spec-bounded at 666). Oversized signatures are **rejected, never truncated**; the client re-signs. See [`falcon-interop.md`](falcon-interop.md) |
+| Misaligned prepared pubkey (availability) | `Falcon512PreparedPubkey` needs ≥2-byte alignment or verification fails on **correct** bytes. On-chain safety depends on the account offset being 8-byte aligned, asserted at compile time in `core/src/state.rs`. A Milestone 1 client bug of exactly this kind is documented in [`falcon-interop.md`](falcon-interop.md) |
 
 ### Ed25519 precompile
 
@@ -108,13 +111,27 @@ This document does **not** claim formal security or quantum-proofness.
 | 6 | Expired intent fails | `expiry_slot` vs clock | `expired_intent.rs` |
 | 7 | HybridAnd needs Ed25519 | Policy eval | `invalid_ed25519.rs` |
 | 8 | HybridAnd needs Falcon | Policy eval | `invalid_falcon.rs` |
-| 9 | No Falcon sk on-chain | Client-only keygen; account layout | review + init tests |
-| 10 | Same canonical intent | Shared `dualkey-core` preimage | Milestone 1 dual-sign test |
+| 9 | No Falcon sk on-chain | Client-only keygen; account layout | `prepared_account_data_contains_no_secret_material` (M1, done) |
+| 10 | Same canonical intent | Shared `dualkey-core` preimage | `both_schemes_sign_exactly_the_same_digest` (M1, done) |
 | 11 | Amount immutable post-sign | Amount in action body | altered amount case |
 | 12 | Recipient immutable post-sign | Recipient in action body | altered recipient case |
 | 13 | Nonce immutable post-sign | Nonce in preimage | modified nonce case |
 | 14 | Policy changes authenticated | `ChangePolicy` as signed action | Milestone 10 |
 | 15 | Rotation cannot bypass old policy | Auth under current policy + PoP | `key_rotation.rs` |
+
+## Key material handling (Milestone 1, implemented)
+
+| Control | Mechanism | Test |
+|---------|-----------|------|
+| Private key files not readable by others | Created with mode `0600` via `OpenOptions::mode` before any bytes are written | `private_key_files_have_mode_0600`, `no_secret_file_is_group_or_world_readable` |
+| Key directory not traversable | Directory set to `0700` | manual + keygen path |
+| Secrets never printed | `KeygenReport` carries only public material; `FalconKeypair` and `Ed25519Keypair` expose no `Debug` impl | `keygen_report_output_contains_no_secret_bytes` |
+| Secrets never in signed output | Bundle and manifest contain public fields only | `signed_bundle_contains_no_secret_material`, `keyset_manifest_contains_no_secret_material` |
+| Secrets never in error text | Errors report paths and lengths only | `error_messages_contain_no_secret_material` |
+| Secrets never in on-chain data | `falcon512.prepared` is reproducible from the public key alone | `prepared_account_data_contains_no_secret_material` |
+
+File formats are documented in [`../client/src/keys.rs`](../client/src/keys.rs)
+and summarised in the README.
 
 ## Residual risks (accepted for research)
 
