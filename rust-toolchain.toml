@@ -1,0 +1,8 @@
+[toolchain]
+channel = "1.85.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"
+
+# The Agave/Solana SBF platform toolchain is installed separately via
+# scripts/setup-toolchain.sh (cargo-build-sbf). Do not add the Solana
+# platform-tools target here; it is managed by the Solana CLI install.
