@@ -144,7 +144,7 @@ movement. The account instructions return `Unimplemented`.
 | 6 | Replay protection + expiry | **Done** |
 | 7 | Hybrid-authorized SOL transfer | **Done** |
 | 8 | CU + transaction-size benchmarks | **Done** |
-| 9 | Key rotation | Pending |
+| 9 | Key rotation | **Done** |
 | 10 | Richer policies | Pending |
 | 11 | SPL Token | Pending |
 
@@ -301,7 +301,7 @@ message telling you to.
 ## Test instructions
 
 ```bash
-# Everything (151 tests as of Milestone 8; needs the .so built first)
+# Everything (160 tests as of Milestone 9; needs the .so built first)
 cargo test --workspace
 
 # Shared types, layout, canonical encoding
@@ -324,6 +324,9 @@ cargo test -p dualkey-client --release --test sbf_hybrid -- --nocapture
 
 # CU + legacy tx size matrix (Milestone 8)
 cargo test -p dualkey-client --release --test sbf_bench -- --nocapture
+
+# Key rotation (Milestone 9)
+cargo test -p dualkey-client --release --test sbf_rotate -- --nocapture
 
 # Signature length distribution soak (10,000 signatures)
 cargo test -p dualkey-client --release --test falcon_interop -- --ignored --nocapture
@@ -348,6 +351,7 @@ Test groups (all under `client/tests/`):
 | `sbf_reconstruct.rs` | SBF (M4) | Intent reconstruction from trusted context + 49-byte wire; digest match; wrong context fails |
 | `sbf_hybrid.rs` | SBF (M5–M7) | HybridAnd / policies; nonce/replay/expiry; TransferSol + rent floor |
 | `sbf_bench.rs` | SBF (M8) | Policy CU matrix (9 samples); legacy tx size ≤ 1232 without ALT |
+| `sbf_rotate.rs` | SBF (M9) | RotateEd25519 / RotateFalcon + PoP; old key cannot authorize after rotate |
 
 The SBF tests live in `client/tests/` rather than `program/tests/` on purpose:
 it keeps every Falcon **signer** out of the program package's dependency graph,
@@ -355,9 +359,8 @@ even as a dev-dependency, and makes each test a genuine cross-layer check —
 the client signs with PQClean, the program verifies with `solana-falcon512`.
 
 On-chain attack/integration coverage so far: HybridAnd success/failure,
-replay, expiry, TransferSol / rent floor / wrong recipient (see `sbf_hybrid.rs`),
-plus CU/size benches (`sbf_bench.rs`). Still planned: `wrong_program`,
-`wrong_vault`, `key_rotation`.
+replay, expiry, TransferSol / rent floor, CU/size benches, and key rotation
+with Falcon PoP. Still planned: richer policies (M10), SPL (M11).
 
 ## Benchmarks
 
@@ -436,6 +439,7 @@ Research questions guiding the work:
 - [`docs/milestone-6.md`](docs/milestone-6.md) — replay protection + expiry  
 - [`docs/milestone-7.md`](docs/milestone-7.md) — hybrid-authorized SOL transfer  
 - [`docs/milestone-8.md`](docs/milestone-8.md) — CU + legacy transaction size  
+- [`docs/milestone-9.md`](docs/milestone-9.md) — key rotation + Falcon PoP  
 - [`docs/threat-model.md`](docs/threat-model.md) — adversaries and invariants  
 - [`docs/benchmark-plan.md`](docs/benchmark-plan.md) — measurement plan  
 

@@ -23,7 +23,10 @@
 
 use crate::canonical::{ACTION_BODY_LEN, INTENT_VERSION};
 use crate::error::DualKeyError;
-use crate::intent::{Action, AuthorizationIntent, ACTION_TAG_TRANSFER_SOL};
+use crate::intent::{
+    Action, AuthorizationIntent, ACTION_TAG_ROTATE_ED25519, ACTION_TAG_ROTATE_FALCON,
+    ACTION_TAG_TRANSFER_SOL,
+};
 
 /// Wire length of the reconstructable intent fragment (no discriminator, no sig).
 pub const EXECUTE_INTENT_WIRE_LEN: usize = 8 + 1 + ACTION_BODY_LEN;
@@ -66,6 +69,14 @@ impl ExecuteIntentWire {
                 let body = wire_offsets::ACTION_BODY;
                 out[body..body + 32].copy_from_slice(&recipient);
                 out[body + 32..body + 40].copy_from_slice(&lamports.to_le_bytes());
+            }
+            Action::RotateEd25519Key { new_pubkey } => {
+                let body = wire_offsets::ACTION_BODY;
+                out[body..body + 32].copy_from_slice(&new_pubkey);
+            }
+            Action::RotateFalconKey { new_pubkey_hash } => {
+                let body = wire_offsets::ACTION_BODY;
+                out[body..body + 32].copy_from_slice(&new_pubkey_hash);
             }
         }
         out
@@ -123,6 +134,18 @@ impl Action {
                     recipient,
                     lamports,
                 })
+            }
+            ACTION_TAG_ROTATE_ED25519 => {
+                let new_pubkey: [u8; 32] = body[..32]
+                    .try_into()
+                    .map_err(|_| DualKeyError::MalformedInstructionData)?;
+                Ok(Self::RotateEd25519Key { new_pubkey })
+            }
+            ACTION_TAG_ROTATE_FALCON => {
+                let new_pubkey_hash: [u8; 32] = body[..32]
+                    .try_into()
+                    .map_err(|_| DualKeyError::MalformedInstructionData)?;
+                Ok(Self::RotateFalconKey { new_pubkey_hash })
             }
             _ => Err(DualKeyError::UnsupportedAction),
         }

@@ -178,6 +178,18 @@ impl HybridAccount<'_> {
         buf.copy_from_slice(&data[offsets::NONCE..offsets::NONCE + 8]);
         Ok(u64::from_le_bytes(buf))
     }
+
+    /// Read `falcon_public_key_hash` without requiring mutability.
+    pub fn falcon_public_key_hash_from_slice(data: &[u8]) -> Result<[u8; 32], DualKeyError> {
+        if data.len() != ACCOUNT_DATA_LEN {
+            return Err(DualKeyError::InvalidAccountData);
+        }
+        let mut out = [0u8; 32];
+        out.copy_from_slice(
+            &data[offsets::FALCON_PUBLIC_KEY_HASH..offsets::FALCON_PUBLIC_KEY_HASH + 32],
+        );
+        Ok(out)
+    }
 }
 
 impl<'a> HybridAccount<'a> {

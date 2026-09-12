@@ -117,7 +117,7 @@ This document does **not** claim formal security or quantum-proofness.
 | 12 | Recipient immutable post-sign | Recipient in action body | altered recipient case |
 | 13 | Nonce immutable post-sign | Nonce in preimage | modified nonce case |
 | 14 | Policy changes authenticated | `ChangePolicy` as signed action | Milestone 10 |
-| 15 | Rotation cannot bypass old policy | Auth under current policy + PoP | `key_rotation.rs` |
+| 15 | Rotation cannot bypass old policy | Auth under current policy + PoP | `sbf_rotate.rs` (M9, done) |
 
 ## Key material handling (Milestone 1, implemented)
 

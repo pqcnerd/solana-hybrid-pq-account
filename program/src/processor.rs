@@ -3,9 +3,9 @@
 //! Milestone 2: verification harness (240–242).
 //! Milestone 3: `Initialize` (0).
 //! Milestone 4: reconstruction harness (243).
-//! Milestone 5–7: `Execute` authorization, replay/expiry, and `TransferSol` (1).
-//! Rotation / policy-change instructions still return
-//! [`DualKeyError::Unimplemented`].
+//! Milestone 5–7: `Execute` authorization + `TransferSol` (1).
+//! Milestone 9: `RotateEd25519Key` (2), `RotateFalconKey` (3).
+//! `ChangePolicy` still returns [`DualKeyError::Unimplemented`].
 
 use dualkey_core::{DualKeyError, CANONICAL_PREIMAGE_LEN, DIGEST_LEN};
 use solana_account_info::AccountInfo;
@@ -47,11 +47,15 @@ pub fn process(
 
         DualKeyInstruction::Execute => crate::execute::process(program_id, accounts, payload),
 
-        DualKeyInstruction::RotateEd25519Key
-        | DualKeyInstruction::RotateFalconKey
-        | DualKeyInstruction::ChangePolicy => {
+        DualKeyInstruction::RotateEd25519Key => {
+            crate::rotate::process_rotate_ed25519(program_id, accounts, payload)
+        }
+        DualKeyInstruction::RotateFalconKey => {
+            crate::rotate::process_rotate_falcon(program_id, accounts, payload)
+        }
+
+        DualKeyInstruction::ChangePolicy => {
             msg!("DualKey: instruction {} not yet implemented", ix.as_u8());
-            // Explicit rejection — never a silent success.
             Err(DualKeyError::Unimplemented)
         }
     }

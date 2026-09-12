@@ -495,27 +495,20 @@ fn garbage_prepared_key_fails_verification_without_panicking() {
     }
 }
 
-/// The instructions that would mutate keys or policy must still refuse.
-/// `Execute` is excluded: Milestone 5 implements authorization (still no
-/// transfers or nonce consumption).
+/// The instructions that would mutate policy must still refuse.
+/// Key rotation is implemented in Milestone 9 (`sbf_rotate`).
 #[test]
-fn mutating_instructions_remain_unimplemented() {
+fn policy_change_remains_unimplemented() {
     let mollusk = mollusk();
-    for disc in [
-        DualKeyInstruction::RotateEd25519Key,
-        DualKeyInstruction::RotateFalconKey,
-        DualKeyInstruction::ChangePolicy,
-    ] {
-        mollusk.process_and_validate_instruction(
-            &Instruction {
-                program_id: program_id(),
-                accounts: vec![],
-                data: vec![disc.as_u8()],
-            },
-            &[],
-            &[custom(DualKeyError::Unimplemented)],
-        );
-    }
+    mollusk.process_and_validate_instruction(
+        &Instruction {
+            program_id: program_id(),
+            accounts: vec![],
+            data: vec![DualKeyInstruction::ChangePolicy.as_u8()],
+        },
+        &[],
+        &[custom(DualKeyError::Unimplemented)],
+    );
 }
 
 // ---------------------------------------------------------------------------

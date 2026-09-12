@@ -9,9 +9,9 @@
 //!
 //! Milestone 4 adds on-chain intent reconstruction (discriminator 243).
 //!
-//! Milestone 5–6 implement `Execute` authorization with expiry and nonce
-//! consumption. Milestone 7 executes `TransferSol` after a successful
-//! authorization.
+//! Milestone 5–7 implement `Execute` authorization with expiry, nonce
+//! consumption, and `TransferSol`. Milestone 9 adds key rotation
+//! (`RotateEd25519Key`, `RotateFalconKey` with Falcon proof-of-possession).
 //!
 //! Falcon key generation and Falcon signing never happen here; this crate
 //! contains verification only, and `pqcrypto-falcon` is absent from its
@@ -22,6 +22,7 @@ use solana_program_entrypoint::entrypoint;
 use solana_pubkey::Pubkey;
 
 pub mod auth;
+pub mod authorize;
 pub mod chain_domain;
 pub mod error;
 pub mod execute;
@@ -31,6 +32,7 @@ pub mod instruction;
 pub mod pda;
 pub mod processor;
 pub mod reconstruct;
+pub mod rotate;
 
 pub use error::to_program_error;
 

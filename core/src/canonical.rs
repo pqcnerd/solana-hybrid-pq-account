@@ -83,6 +83,16 @@ pub fn canonical_preimage(intent: &AuthorizationIntent) -> [u8; CANONICAL_PREIMA
             out[body..body + 32].copy_from_slice(&recipient);
             out[body + 32..body + 40].copy_from_slice(&lamports.to_le_bytes());
         }
+        Action::RotateEd25519Key { new_pubkey } => {
+            let body = offsets::ACTION_BODY;
+            out[body..body + 32].copy_from_slice(&new_pubkey);
+            // Remaining 8 bytes stay zero (reserved).
+        }
+        Action::RotateFalconKey { new_pubkey_hash } => {
+            let body = offsets::ACTION_BODY;
+            out[body..body + 32].copy_from_slice(&new_pubkey_hash);
+            // Remaining 8 bytes stay zero (reserved).
+        }
     }
 
     out

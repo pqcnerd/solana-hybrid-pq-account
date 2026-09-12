@@ -68,13 +68,26 @@ Constants live in [`dualkey-core::canonical`](../core/src/canonical.rs):
 action_body = recipient[32] || lamports:u64 LE
 ```
 
-Remaining action tags are reserved (not encoded until later milestones):
+### Tag `3` — `RotateEd25519Key` (Milestone 9)
+
+```text
+action_body = new_ed25519_pubkey[32] || 0u64
+```
+
+### Tag `4` — `RotateFalconKey` (Milestone 9)
+
+```text
+action_body = SHA256(new_falcon_wire_pubkey)[32] || 0u64
+```
+
+The 897-byte wire public key and Falcon PoP signature travel in the
+`RotateFalconKey` instruction payload (not in the 40-byte action body).
+
+Remaining action tags are reserved:
 
 | Tag | Action | Milestone |
 |----:|--------|----------:|
 | 2 | TransferSpl | 11 |
-| 3 | RotateEd25519Key | 9 |
-| 4 | RotateFalconKey | 9 |
 | 5 | ChangePolicy | 10 |
 | 6 | RecoverAccount | 10 |
 

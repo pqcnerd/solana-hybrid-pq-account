@@ -7,17 +7,18 @@ use crate::canonical::INTENT_VERSION;
 
 /// Action discriminator for `TransferSol` (Milestone 7).
 pub const ACTION_TAG_TRANSFER_SOL: u8 = 1;
-
-/// Reserved tags for later milestones (declared for forward compatibility).
+/// Action discriminator for `TransferSpl` (Milestone 11 — reserved).
 pub const ACTION_TAG_TRANSFER_SPL: u8 = 2;
+/// Action discriminator for `RotateEd25519Key` (Milestone 9).
 pub const ACTION_TAG_ROTATE_ED25519: u8 = 3;
+/// Action discriminator for `RotateFalconKey` (Milestone 9).
 pub const ACTION_TAG_ROTATE_FALCON: u8 = 4;
+/// Action discriminator for `ChangePolicy` (Milestone 10 — reserved).
 pub const ACTION_TAG_CHANGE_POLICY: u8 = 5;
+/// Action discriminator for `RecoverAccount` (Milestone 10 — reserved).
 pub const ACTION_TAG_RECOVER_ACCOUNT: u8 = 6;
 
 /// Authorized action encoded inside an intent.
-///
-/// Only [`Action::TransferSol`] is in scope for early milestones.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Action {
     /// Transfer lamports from the DualKey PDA to `recipient`.
@@ -27,6 +28,25 @@ pub enum Action {
         /// Amount in lamports.
         lamports: u64,
     },
+    /// Replace the Ed25519 owner key (Milestone 9).
+    ///
+    /// Authorized under the **current** policy. The new pubkey is bound into
+    /// the signed digest; a separate proof-of-possession is not required
+    /// (anyone who can authorize can already drain the vault).
+    RotateEd25519Key {
+        /// Replacement Ed25519 owner public key.
+        new_pubkey: [u8; 32],
+    },
+    /// Replace the Falcon-512 public key (Milestone 9).
+    ///
+    /// `new_pubkey_hash` is `SHA256(wire_pubkey)` for the 897-byte key that
+    /// accompanies the `RotateFalconKey` instruction. The instruction also
+    /// requires a Falcon proof-of-possession over the same digest under the
+    /// **new** key so a bogus registration cannot brick HybridAnd accounts.
+    RotateFalconKey {
+        /// SHA-256 of the new 897-byte Falcon wire public key.
+        new_pubkey_hash: [u8; 32],
+    },
 }
 
 impl Action {
@@ -34,6 +54,8 @@ impl Action {
     pub const fn tag(self) -> u8 {
         match self {
             Self::TransferSol { .. } => ACTION_TAG_TRANSFER_SOL,
+            Self::RotateEd25519Key { .. } => ACTION_TAG_ROTATE_ED25519,
+            Self::RotateFalconKey { .. } => ACTION_TAG_ROTATE_FALCON,
         }
     }
 }

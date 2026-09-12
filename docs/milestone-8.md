@@ -111,4 +111,5 @@ cargo test -p dualkey-client --release --test sbf_bench -- --nocapture
 - **No SPL** (Milestone 11)
 - No separate LiteSVM CU column (Mollusk multi-ix is the transaction figure)
 
-Milestone 8 is complete. Milestone 9 (key rotation) has not been started.
+Milestone 8 is complete. See [`docs/milestone-9.md`](milestone-9.md) for key
+rotation (Milestone 9).

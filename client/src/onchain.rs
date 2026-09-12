@@ -238,6 +238,13 @@ pub fn execute_instruction(
 ) -> Result<Instruction> {
     let recipient = match intent.action {
         dualkey_core::Action::TransferSol { recipient, .. } => Pubkey::new_from_array(recipient),
+        _ => {
+            return Err(ClientError::IntentFormat {
+                path: "execute".into(),
+                reason: "Execute only accepts TransferSol; use rotate_* builders for key rotation"
+                    .into(),
+            });
+        }
     };
     let data = execute_data(intent, falcon_sig)?;
     Ok(Instruction {
@@ -245,6 +252,114 @@ pub fn execute_instruction(
         accounts: vec![
             AccountMeta::new(*hybrid_account, false),
             AccountMeta::new(recipient, false),
+            AccountMeta::new_readonly(instructions_sysvar_id(), false),
+        ],
+        data,
+    })
+}
+
+/// Discriminator for `RotateEd25519Key`.
+pub const ROTATE_ED25519_DISCRIMINATOR: u8 = 2;
+
+/// Discriminator for `RotateFalconKey`.
+pub const ROTATE_FALCON_DISCRIMINATOR: u8 = 3;
+
+/// Full `RotateFalconKey` instruction data length.
+pub const ROTATE_FALCON_DATA_LEN: usize = 1
+    + EXECUTE_INTENT_WIRE_LEN
+    + FALCON_SIGNATURE_LEN
+    + FALCON_WIRE_PUBKEY_LEN
+    + FALCON_SIGNATURE_LEN;
+
+const _: () = assert!(ROTATE_FALCON_DATA_LEN == 2279);
+
+/// Build `RotateEd25519Key` (discriminator 2). Payload shape matches Execute.
+pub fn rotate_ed25519_instruction(
+    program_id: &Pubkey,
+    hybrid_account: &Pubkey,
+    intent: &AuthorizationIntent,
+    falcon_sig: &[u8],
+) -> Result<Instruction> {
+    match intent.action {
+        dualkey_core::Action::RotateEd25519Key { .. } => {}
+        _ => {
+            return Err(ClientError::IntentFormat {
+                path: "rotate_ed25519".into(),
+                reason: "intent action must be RotateEd25519Key".into(),
+            });
+        }
+    }
+    let mut data = Vec::with_capacity(EXECUTE_DATA_LEN);
+    data.push(ROTATE_ED25519_DISCRIMINATOR);
+    data.extend_from_slice(&encode_execute_intent_wire(intent));
+    if falcon_sig.len() != FALCON_SIGNATURE_LEN {
+        return Err(ClientError::KeyFileLength {
+            path: "falcon signature".to_string(),
+            expected: FALCON_SIGNATURE_LEN,
+            actual: falcon_sig.len(),
+        });
+    }
+    data.extend_from_slice(falcon_sig);
+    Ok(Instruction {
+        program_id: *program_id,
+        accounts: vec![
+            AccountMeta::new(*hybrid_account, false),
+            AccountMeta::new_readonly(instructions_sysvar_id(), false),
+        ],
+        data,
+    })
+}
+
+/// Build `RotateFalconKey` (discriminator 3) with auth sig, new wire key, and PoP sig.
+pub fn rotate_falcon_instruction(
+    program_id: &Pubkey,
+    hybrid_account: &Pubkey,
+    intent: &AuthorizationIntent,
+    falcon_auth_sig: &[u8],
+    new_wire_pubkey: &[u8],
+    falcon_pop_sig: &[u8],
+) -> Result<Instruction> {
+    match intent.action {
+        dualkey_core::Action::RotateFalconKey { .. } => {}
+        _ => {
+            return Err(ClientError::IntentFormat {
+                path: "rotate_falcon".into(),
+                reason: "intent action must be RotateFalconKey".into(),
+            });
+        }
+    }
+    if falcon_auth_sig.len() != FALCON_SIGNATURE_LEN {
+        return Err(ClientError::KeyFileLength {
+            path: "falcon auth signature".to_string(),
+            expected: FALCON_SIGNATURE_LEN,
+            actual: falcon_auth_sig.len(),
+        });
+    }
+    if new_wire_pubkey.len() != FALCON_WIRE_PUBKEY_LEN {
+        return Err(ClientError::KeyFileLength {
+            path: "falcon512.pk".to_string(),
+            expected: FALCON_WIRE_PUBKEY_LEN,
+            actual: new_wire_pubkey.len(),
+        });
+    }
+    if falcon_pop_sig.len() != FALCON_SIGNATURE_LEN {
+        return Err(ClientError::KeyFileLength {
+            path: "falcon pop signature".to_string(),
+            expected: FALCON_SIGNATURE_LEN,
+            actual: falcon_pop_sig.len(),
+        });
+    }
+    let mut data = Vec::with_capacity(ROTATE_FALCON_DATA_LEN);
+    data.push(ROTATE_FALCON_DISCRIMINATOR);
+    data.extend_from_slice(&encode_execute_intent_wire(intent));
+    data.extend_from_slice(falcon_auth_sig);
+    data.extend_from_slice(new_wire_pubkey);
+    data.extend_from_slice(falcon_pop_sig);
+    debug_assert_eq!(data.len(), ROTATE_FALCON_DATA_LEN);
+    Ok(Instruction {
+        program_id: *program_id,
+        accounts: vec![
+            AccountMeta::new(*hybrid_account, false),
             AccountMeta::new_readonly(instructions_sysvar_id(), false),
         ],
         data,
