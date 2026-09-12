@@ -3,7 +3,7 @@
 //! Milestone 2: verification harness (240–242).
 //! Milestone 3: `Initialize` (0).
 //! Milestone 4: reconstruction harness (243).
-//! Milestone 5: `Execute` authorization (1).
+//! Milestone 5–6: `Execute` authorization + replay/expiry (1).
 //! Rotation / policy-change instructions still return
 //! [`DualKeyError::Unimplemented`].
 

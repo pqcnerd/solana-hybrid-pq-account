@@ -41,6 +41,8 @@ solana-get-sysvar = "1"
 # Instructions sysvar introspection for the Ed25519 precompile (Milestone 5).
 solana-instructions-sysvar = "3"
 solana-sdk-ids = "3"
+# Clock sysvar for intent expiry (Milestone 6).
+solana-clock = { version = "3", features = ["sysvar"] }
 
 # PDA derivation is a syscall on-chain, but needs a software curve25519
 # implementation to compile for the host (cargo check / clippy / tests).

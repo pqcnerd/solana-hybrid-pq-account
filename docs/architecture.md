@@ -211,16 +211,18 @@ Declared in `dualkey_core::AuthorizationPolicy`:
 
 1. Load `HybridAccount`; validate PDA + bump  
 2. Validate version / chain domain  
-3. Validate `intent.nonce == account.nonce`  
-4. Validate `current_slot <= expiry_slot`  
-5. Reconstruct intent; compute digest  
+3. Validate `current_slot <= expiry_slot` (cheap reject before crypto)  
+4. Reconstruct intent; compute digest (nonce always from account state)  
+5. Validate reconstructed nonce matches account (invariant / `InvalidNonce`)  
 6. Verify Ed25519 via precompile introspection  
 7. Verify Falcon via prepared pubkey  
 8. Evaluate policy (reject on failure)  
 9. Increment nonce  
-10. Execute action (e.g. SOL transfer)
+10. Execute action (e.g. SOL transfer) — Milestone 7+
 
 State updates rely on Solana transaction atomicity: failure reverts all.
+Replay of a used intent fails because reconstruction binds the new nonce into
+the digest; signatures over the old digest no longer verify.
 
 ## Test / benchmark harness split
 

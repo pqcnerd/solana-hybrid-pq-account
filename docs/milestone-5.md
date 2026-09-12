@@ -113,5 +113,5 @@ cargo-build-sbf --manifest-path program/Cargo.toml
 cargo tree -p dualkey-program --all-features    # no pqcrypto-falcon
 ```
 
-Milestone 5 is complete. Milestone 6 (replay protection + expiry) has not been
-started.
+Milestone 5 is complete. See [`docs/milestone-6.md`](milestone-6.md) for
+replay protection and expiry (Milestone 6).

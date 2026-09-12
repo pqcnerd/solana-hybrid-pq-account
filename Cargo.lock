@@ -941,6 +941,7 @@ version = "0.1.0"
 dependencies = [
  "dualkey-core",
  "solana-account-info",
+ "solana-clock",
  "solana-cpi",
  "solana-falcon512",
  "solana-get-sysvar",

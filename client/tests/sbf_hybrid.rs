@@ -1,11 +1,12 @@
-//! Milestone 5: HybridAnd authorization under Solana SBF.
+//! Milestone 5–6: HybridAnd authorization + replay protection under Solana SBF.
 //!
 //! Builds a real two-instruction transaction (Ed25519 precompile + DualKey
 //! `Execute`) and runs it through Mollusk with the `precompiles` feature so the
 //! runtime actually verifies the Ed25519 signature. Falcon is verified by the
 //! DualKey program against the prepared key stored in the HybridAccount.
 //!
-//! Milestone 5 authorizes only: no nonce consumption, no lamport transfer.
+//! Milestone 6 consumes the account nonce on success and rejects expired
+//! intents. Still no lamport transfer (Milestone 7).
 
 use dualkey_client::falcon_interop;
 use dualkey_client::keys::Ed25519Keypair;
@@ -196,9 +197,14 @@ fn hybrid_and_succeeds_with_both_signatures() {
         "HybridAnd Execute: {} CU (tx total)",
         result.compute_units_consumed
     );
-    // Account unchanged: Milestone 5 does not consume the nonce.
+    // Milestone 6: nonce is consumed on success.
     let after = result.get_account(&f.account).expect("account");
-    assert_eq!(after.data, f.account_data);
+    let after_nonce = HybridAccount::nonce_from_slice(&after.data).unwrap();
+    assert_eq!(
+        after_nonce,
+        f.nonce + 1,
+        "successful Execute must bump nonce"
+    );
 }
 
 #[test]
@@ -421,5 +427,189 @@ fn execute_data_length_is_716() {
     assert_eq!(
         1 + dualkey_core::EXECUTE_INTENT_WIRE_LEN + FALCON_SIGNATURE_LEN,
         716
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Milestone 6: replay protection + expiry
+// ---------------------------------------------------------------------------
+
+#[test]
+fn successful_execute_bumps_nonce_by_one() {
+    let mollusk = mollusk();
+    let f = fixture(AuthorizationPolicy::FalconOnly, 42);
+    let intent = intent_for(&f);
+    let digest = canonical_digest(&intent);
+    let (_d, wire) = falcon_interop::sign_to_wire(&digest, &f.falcon_secret).unwrap();
+    let exec_ix =
+        onchain::execute_instruction(&program_id(), &f.account, &intent, wire.as_wire_bytes())
+            .unwrap();
+
+    let (payer_key, payer_acct) = payer();
+    let result = mollusk.process_and_validate_transaction_instructions(
+        &[exec_ix],
+        &[(payer_key, payer_acct), hybrid_account(&f)],
+        &[Check::success()],
+        Some(&payer_key),
+    );
+    let after = result.get_account(&f.account).unwrap();
+    assert_eq!(HybridAccount::nonce_from_slice(&after.data).unwrap(), 43);
+}
+
+#[test]
+fn replay_of_the_same_signatures_is_rejected() {
+    let mollusk = mollusk();
+    let f = fixture(AuthorizationPolicy::HybridAnd, 0);
+    let intent = intent_for(&f);
+    let digest = canonical_digest(&intent);
+    let (ed_sig, falcon_sig) = sign_both(&f, &intent);
+
+    let ed_ix = onchain::ed25519_precompile_instruction(&digest, &ed_sig, &f.ed.public_bytes());
+    let exec_ix =
+        onchain::execute_instruction(&program_id(), &f.account, &intent, &falcon_sig).unwrap();
+
+    let (payer_key, payer_acct) = payer();
+    let first = mollusk.process_and_validate_transaction_instructions(
+        &[ed_ix.clone(), exec_ix.clone()],
+        &[(payer_key, payer_acct.clone()), hybrid_account(&f)],
+        &[Check::success()],
+        Some(&payer_key),
+    );
+    let after_first = first.get_account(&f.account).unwrap().clone();
+    assert_eq!(
+        HybridAccount::nonce_from_slice(&after_first.data).unwrap(),
+        1
+    );
+
+    // Same signatures against the post-bump account: reconstruction uses nonce
+    // 1, digests no longer match the signatures over nonce 0.
+    let second = mollusk.process_transaction_instructions(
+        &[ed_ix, exec_ix],
+        &[(payer_key, payer_acct), (f.account, after_first)],
+        Some(&payer_key),
+    );
+    assert!(
+        second.raw_result.is_err(),
+        "replaying the same signatures after nonce bump must fail"
+    );
+}
+
+#[test]
+fn expired_intent_is_rejected_before_authorization() {
+    let mut mollusk = mollusk();
+    mollusk.warp_to_slot(100);
+
+    let f = fixture(AuthorizationPolicy::FalconOnly, 0);
+    let mut intent = intent_for(&f);
+    intent.expiry_slot = 50; // already past
+    let digest = canonical_digest(&intent);
+    let (_d, wire) = falcon_interop::sign_to_wire(&digest, &f.falcon_secret).unwrap();
+    let exec_ix =
+        onchain::execute_instruction(&program_id(), &f.account, &intent, wire.as_wire_bytes())
+            .unwrap();
+
+    let (payer_key, payer_acct) = payer();
+    let result = mollusk.process_and_validate_transaction_instructions(
+        &[exec_ix],
+        &[(payer_key, payer_acct), hybrid_account(&f)],
+        &[custom(DualKeyError::IntentExpired)],
+        Some(&payer_key),
+    );
+    let after = result.get_account(&f.account).unwrap();
+    assert_eq!(
+        HybridAccount::nonce_from_slice(&after.data).unwrap(),
+        0,
+        "expired Execute must leave the nonce untouched"
+    );
+}
+
+#[test]
+fn intent_valid_on_exact_expiry_slot() {
+    let mut mollusk = mollusk();
+    mollusk.warp_to_slot(1_000);
+
+    let f = fixture(AuthorizationPolicy::FalconOnly, 5);
+    let mut intent = intent_for(&f);
+    intent.expiry_slot = 1_000; // inclusive
+    let digest = canonical_digest(&intent);
+    let (_d, wire) = falcon_interop::sign_to_wire(&digest, &f.falcon_secret).unwrap();
+    let exec_ix =
+        onchain::execute_instruction(&program_id(), &f.account, &intent, wire.as_wire_bytes())
+            .unwrap();
+
+    run_tx(
+        &mollusk,
+        &[exec_ix],
+        &[hybrid_account(&f)],
+        &[Check::success()],
+    );
+}
+
+#[test]
+fn intent_expires_one_slot_after_expiry_slot() {
+    let mut mollusk = mollusk();
+    mollusk.warp_to_slot(1_001);
+
+    let f = fixture(AuthorizationPolicy::FalconOnly, 5);
+    let mut intent = intent_for(&f);
+    intent.expiry_slot = 1_000;
+    let digest = canonical_digest(&intent);
+    let (_d, wire) = falcon_interop::sign_to_wire(&digest, &f.falcon_secret).unwrap();
+    let exec_ix =
+        onchain::execute_instruction(&program_id(), &f.account, &intent, wire.as_wire_bytes())
+            .unwrap();
+
+    run_tx(
+        &mollusk,
+        &[exec_ix],
+        &[hybrid_account(&f)],
+        &[custom(DualKeyError::IntentExpired)],
+    );
+}
+
+#[test]
+fn failed_authorization_does_not_consume_nonce() {
+    let mollusk = mollusk();
+    let f = fixture(AuthorizationPolicy::HybridAnd, 9);
+    let intent = intent_for(&f);
+    let digest = canonical_digest(&intent);
+    let ed_sig = f.ed.signing_key().sign(&digest).to_bytes();
+    let falcon_sig = [0u8; FALCON_SIGNATURE_LEN]; // invalid Falcon
+
+    let ed_ix = onchain::ed25519_precompile_instruction(&digest, &ed_sig, &f.ed.public_bytes());
+    let exec_ix =
+        onchain::execute_instruction(&program_id(), &f.account, &intent, &falcon_sig).unwrap();
+
+    let (payer_key, payer_acct) = payer();
+    let result = mollusk.process_and_validate_transaction_instructions(
+        &[ed_ix, exec_ix],
+        &[(payer_key, payer_acct), hybrid_account(&f)],
+        &[custom(DualKeyError::InvalidFalcon)],
+        Some(&payer_key),
+    );
+    let after = result.get_account(&f.account).unwrap();
+    assert_eq!(
+        HybridAccount::nonce_from_slice(&after.data).unwrap(),
+        9,
+        "failed Execute must leave the nonce untouched"
+    );
+}
+
+#[test]
+fn max_nonce_refuses_to_authorize() {
+    let mollusk = mollusk();
+    let f = fixture(AuthorizationPolicy::FalconOnly, u64::MAX);
+    let intent = intent_for(&f);
+    let digest = canonical_digest(&intent);
+    let (_d, wire) = falcon_interop::sign_to_wire(&digest, &f.falcon_secret).unwrap();
+    let exec_ix =
+        onchain::execute_instruction(&program_id(), &f.account, &intent, wire.as_wire_bytes())
+            .unwrap();
+
+    run_tx(
+        &mollusk,
+        &[exec_ix],
+        &[hybrid_account(&f)],
+        &[custom(DualKeyError::MathOverflow)],
     );
 }

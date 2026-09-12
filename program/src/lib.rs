@@ -9,10 +9,12 @@
 //!
 //! Milestone 4 adds on-chain intent reconstruction (discriminator 243).
 //!
-//! Milestone 5 implements `Execute` as an authorization oracle: reconstruct the
-//! intent, verify Ed25519 (precompile introspection) and/or Falcon under the
-//! account policy (HybridAnd requires both; never falls back). It still moves
-//! no value and does not consume the nonce — those are Milestones 6–7.
+//! Milestone 5 implements `Execute` authorization: reconstruct the intent,
+//! verify Ed25519 (precompile introspection) and/or Falcon under the account
+//! policy (HybridAnd requires both; never falls back).
+//!
+//! Milestone 6 adds expiry (Clock sysvar) and nonce consumption so a signed
+//! intent cannot be replayed. Value movement is still Milestone 7.
 //!
 //! Falcon key generation and Falcon signing never happen here; this crate
 //! contains verification only, and `pqcrypto-falcon` is absent from its

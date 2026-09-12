@@ -1,9 +1,9 @@
-//! `Execute` — authorize an intent under the account's policy (Milestone 5).
+//! `Execute` — authorize an intent under the account's policy.
 //!
-//! Verifies signatures. Does **not** transfer lamports (Milestone 7) and does
-//! **not** consume the nonce or check expiry against the clock (Milestone 6).
-//! A successful `Execute` in this milestone is an authorization oracle: the
-//! HybridAccount is unchanged.
+//! Milestone 5: Ed25519 / Falcon / HybridAnd verification.
+//! Milestone 6: expiry against the Clock sysvar, and nonce consumption so a
+//! signed intent cannot be replayed. Still does **not** transfer lamports
+//! (Milestone 7).
 //!
 //! ## Instruction data (716 bytes)
 //!
@@ -21,7 +21,7 @@
 //!
 //! | # | Account | |
 //! |---|---------|--|
-//! | 0 | `hybrid_account` | readonly — vault state (keys, nonce, policy) |
+//! | 0 | `hybrid_account` | **writable** — nonce is incremented on success |
 //! | 1 | `instructions_sysvar` | readonly — for Ed25519 precompile introspection |
 //!
 //! The Ed25519 signature is **not** in this instruction. It must appear as the
@@ -33,6 +33,8 @@ use dualkey_core::{
     FALCON_SIGNATURE_LEN,
 };
 use solana_account_info::AccountInfo;
+use solana_clock::Clock;
+use solana_get_sysvar::GetSysvar;
 use solana_msg::msg;
 use solana_pubkey::Pubkey;
 
@@ -50,6 +52,11 @@ pub const EXECUTE_DATA_LEN: usize = 1 + EXECUTE_PAYLOAD_LEN;
 const _: () = assert!(EXECUTE_DATA_LEN == 716);
 
 /// Authorize `payload` against the HybridAccount under its stored policy.
+///
+/// On success the account nonce is incremented. A second submission of the same
+/// signatures then reconstructs a different digest (new nonce) and fails
+/// verification — that is the replay defense. Expiry is checked against
+/// `Clock::get().slot` before the expensive Falcon verify.
 pub fn process(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
@@ -63,27 +70,52 @@ pub fn process(
         return Err(DualKeyError::MalformedInstructionData);
     };
 
+    if !hybrid_account.is_writable {
+        return Err(DualKeyError::InvalidAccountData);
+    }
+
     let (wire_bytes, falcon_sig) = payload
         .split_at_checked(EXECUTE_INTENT_WIRE_LEN)
         .ok_or(DualKeyError::MalformedInstructionData)?;
     let wire = ExecuteIntentWire::decode(wire_bytes)?;
 
+    // Expiry before crypto: a stale intent should fail cheaply. Inclusive bound
+    // (`<=`) matches the intent field docs ("last slot at which this intent is
+    // valid").
+    let clock = Clock::get().map_err(|_| DualKeyError::InvalidAccountData)?;
+    if clock.slot > wire.expiry_slot {
+        return Err(DualKeyError::IntentExpired);
+    }
+
     // Reconstruct + digest before any crypto so both schemes bind the same
-    // bytes. Also validates program ownership and account version.
-    let (digest, _ctx) = reconstruct_and_digest(program_id, hybrid_account, &wire)?;
+    // bytes. The reconstructed nonce is always the account's current nonce, so
+    // a client that signed a different nonce gets a digest mismatch at verify
+    // (see InvalidNonce note below).
+    let (digest, ctx) = reconstruct_and_digest(program_id, hybrid_account, &wire)?;
 
     let data = hybrid_account
         .try_borrow_data()
         .map_err(|_| DualKeyError::InvalidAccountData)?;
-    // reconstruct_and_digest already checked version; re-read fields for auth.
-    let _ = HybridAccount::version_from_slice(&data)?;
     let policy = HybridAccount::policy_from_slice(&data)?;
     let owner_ed25519 = HybridAccount::owner_ed25519_from_slice(&data)?;
     let prepared = *HybridAccount::prepared_falcon_public_key_from_slice(&data)?;
+    let account_nonce = HybridAccount::nonce_from_slice(&data)?;
     drop(data);
 
-    // Verify only what the policy requires. HybridAnd always verifies both and
-    // never returns Ok if either half fails.
+    // Redundant with reconstruction, but keeps InvalidNonce as an explicit
+    // failure mode if those paths ever diverge, and documents the invariant
+    // the architecture requires.
+    if ctx.nonce != account_nonce {
+        return Err(DualKeyError::InvalidNonce);
+    }
+
+    // Refuse to authorize when the next bump would overflow — otherwise a
+    // successful verify could not be recorded and the intent would remain
+    // forever replayable.
+    let next_nonce = account_nonce
+        .checked_add(1)
+        .ok_or(DualKeyError::MathOverflow)?;
+
     let sigs = match policy {
         AuthorizationPolicy::Ed25519Only => {
             verify_ed25519_precompile(instructions_sysvar, &owner_ed25519, &digest)?;
@@ -116,8 +148,21 @@ pub fn process(
 
     evaluate_policy(policy, sigs)?;
 
-    // Milestone 5 stops here: authorization succeeded. No nonce bump, no
-    // transfer. Those are Milestones 6 and 7.
-    msg!("DualKey: authorization VALID ({})", policy.name());
+    // Auth succeeded — consume the nonce. Solana transaction atomicity means
+    // this write reverts if anything later fails (Milestone 7 transfer).
+    {
+        let mut data = hybrid_account
+            .try_borrow_mut_data()
+            .map_err(|_| DualKeyError::InvalidAccountData)?;
+        let mut account = HybridAccount::try_from_bytes(&mut data)?;
+        account.set_nonce(next_nonce);
+    }
+
+    msg!(
+        "DualKey: authorization VALID ({}); nonce {} -> {}",
+        policy.name(),
+        account_nonce,
+        next_nonce
+    );
     Ok(())
 }

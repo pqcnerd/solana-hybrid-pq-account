@@ -141,7 +141,7 @@ movement. The account instructions return `Unimplemented`.
 | 3 | HybridAccount PDA (no transfers yet) | **Done** |
 | 4 | Canonical intent encoding + on-chain reconstruction | **Done** |
 | 5 | HybridAnd authorization | **Done** |
-| 6 | Replay protection + expiry | Pending |
+| 6 | Replay protection + expiry | **Done** |
 | 7 | Hybrid-authorized SOL transfer | Pending |
 | 8 | CU + transaction-size benchmarks | Pending |
 | 9 | Key rotation | Pending |
@@ -301,7 +301,7 @@ message telling you to.
 ## Test instructions
 
 ```bash
-# Everything (135 tests as of Milestone 5; needs the .so built first)
+# Everything (142 tests as of Milestone 6; needs the .so built first)
 cargo test --workspace
 
 # Shared types, layout, canonical encoding
@@ -319,7 +319,7 @@ cargo test -p dualkey-client --release --test sbf_initialize -- --nocapture
 # On-chain intent reconstruction (Milestone 4)
 cargo test -p dualkey-client --release --test sbf_reconstruct -- --nocapture
 
-# HybridAnd authorization (Milestone 5; needs mollusk precompiles feature)
+# HybridAnd + replay/expiry (Milestones 5–6; needs mollusk precompiles feature)
 cargo test -p dualkey-client --release --test sbf_hybrid -- --nocapture
 
 # Signature length distribution soak (10,000 signatures)
@@ -343,17 +343,16 @@ Test groups (all under `client/tests/`):
 | `sbf_falcon.rs` | SBF (M2) | Falcon verify + `sol_sha256` inside the SBF VM; malformed input; CU |
 | `sbf_initialize.rs` | SBF (M3) | HybridAccount PDA creation, on-chain Falcon key preparation, rejection paths, CU and rent |
 | `sbf_reconstruct.rs` | SBF (M4) | Intent reconstruction from trusted context + 49-byte wire; digest match; wrong context fails |
-| `sbf_hybrid.rs` | SBF (M5) | HybridAnd / Ed25519Only / FalconOnly; no single-scheme fallback; precompile binding |
+| `sbf_hybrid.rs` | SBF (M5–M6) | HybridAnd / Ed25519Only / FalconOnly; no single-scheme fallback; nonce bump, replay reject, expiry |
 
 The SBF tests live in `client/tests/` rather than `program/tests/` on purpose:
 it keeps every Falcon **signer** out of the program package's dependency graph,
 even as a dev-dependency, and makes each test a genuine cross-layer check —
 the client signs with PQClean, the program verifies with `solana-falcon512`.
 
-Planned on-chain attack/integration tests (Milestone 5+):  
-`valid_hybrid_signature`, `invalid_ed25519`, `invalid_falcon`, `replay_attack`,
-`expired_intent`, `altered_message`, `wrong_program`, `wrong_vault`,
-`key_rotation`.
+On-chain attack/integration coverage so far: HybridAnd success/failure,
+replay, expiry, wrong digest/pubkey (see `sbf_hybrid.rs`). Still planned:
+`wrong_program`, `wrong_vault`, `key_rotation`, LiteSVM tx-size (M8).
 
 ## Benchmarks
 
@@ -422,6 +421,7 @@ Research questions guiding the work:
 - [`docs/canonical-intent.md`](docs/canonical-intent.md) — signing encoding  
 - [`docs/falcon-interop.md`](docs/falcon-interop.md) — PQClean ↔ on-chain Falcon encoding findings  
 - [`docs/milestone-2.md`](docs/milestone-2.md) — Falcon under SBF: measured CU, resolved open questions  
+- [`docs/milestone-6.md`](docs/milestone-6.md) — replay protection + expiry  
 - [`docs/threat-model.md`](docs/threat-model.md) — adversaries and invariants  
 - [`docs/benchmark-plan.md`](docs/benchmark-plan.md) — measurement plan  
 

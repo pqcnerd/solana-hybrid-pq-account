@@ -107,10 +107,10 @@ This document does **not** claim formal security or quantum-proofness.
 | 2 | Sig for program P cannot authorize Q | `program_id` in preimage | `wrong_program.rs` |
 | 3 | Cross-network replay limited | `chain_domain` constant | domain mismatch case |
 | 4 | One-bit intent change fails verify | Canonical digest binding | `altered_message.rs` |
-| 5 | Intent executes at most once | Nonce increment | `replay_attack.rs` |
-| 6 | Expired intent fails | `expiry_slot` vs clock | `expired_intent.rs` |
-| 7 | HybridAnd needs Ed25519 | Policy eval | `invalid_ed25519.rs` |
-| 8 | HybridAnd needs Falcon | Policy eval | `invalid_falcon.rs` |
+| 5 | Intent executes at most once | Nonce increment | `replay_of_the_same_signatures_is_rejected` (M6, done) |
+| 6 | Expired intent fails | `expiry_slot` vs clock | `expired_intent_is_rejected_before_authorization` (M6, done) |
+| 7 | HybridAnd needs Ed25519 | Policy eval | `hybrid_and_rejects_falcon_without_ed25519` (M5, done) |
+| 8 | HybridAnd needs Falcon | Policy eval | `hybrid_and_rejects_ed25519_without_falcon` (M5, done) |
 | 9 | No Falcon sk on-chain | Client-only keygen; account layout | `prepared_account_data_contains_no_secret_material` (M1, done) |
 | 10 | Same canonical intent | Shared `dualkey-core` preimage | `both_schemes_sign_exactly_the_same_digest` (M1, done) |
 | 11 | Amount immutable post-sign | Amount in action body | altered amount case |
