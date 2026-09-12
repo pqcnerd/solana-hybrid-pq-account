@@ -1,6 +1,6 @@
 //! DualKey instruction discriminators.
 //!
-//! Discriminators 0–4 are the real account instructions; their bodies land in
+//! Discriminators 0–5 are the real account instructions; their bodies land in
 //! later milestones.
 //!
 //! Discriminators 240–242 are the Milestone 2 verification harness. They exist
@@ -28,6 +28,16 @@ pub enum DualKeyInstruction {
     RotateFalconKey = 3,
     /// Change authorization policy (Milestone 10).
     ChangePolicy = 4,
+    /// Recovery enable/disable / Falcon-only Ed25519 rotate.
+    RecoverAccount = 5,
+    /// Set / replace social-recovery guardian + delay (Milestone 15).
+    SetRecoveryConfig = 6,
+    /// Guardian initiates a pending Ed25519 owner change (Milestone 15).
+    InitiateSocialRecovery = 7,
+    /// Finalize pending social recovery after the timelock (Milestone 15).
+    FinalizeSocialRecovery = 8,
+    /// Cancel pending social recovery under DualKey policy (Milestone 15).
+    CancelSocialRecovery = 9,
 
     /// Milestone 2 harness: verify a Falcon-512 signature against the prepared
     /// public key held in the first account's data.
@@ -77,6 +87,11 @@ impl DualKeyInstruction {
             2 => Some(Self::RotateEd25519Key),
             3 => Some(Self::RotateFalconKey),
             4 => Some(Self::ChangePolicy),
+            5 => Some(Self::RecoverAccount),
+            6 => Some(Self::SetRecoveryConfig),
+            7 => Some(Self::InitiateSocialRecovery),
+            8 => Some(Self::FinalizeSocialRecovery),
+            9 => Some(Self::CancelSocialRecovery),
             240 => Some(Self::VerifyFalconPrepared),
             241 => Some(Self::VerifyFalconRaw),
             242 => Some(Self::VerifyCanonicalDigest),

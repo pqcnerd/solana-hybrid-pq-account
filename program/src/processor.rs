@@ -6,6 +6,7 @@
 //! Milestone 5–7: `Execute` authorization + `TransferSol` (1).
 //! Milestone 9: `RotateEd25519Key` (2), `RotateFalconKey` (3).
 //! Milestone 10: `ChangePolicy` (4).
+//! Milestone 15: social recovery (6–9).
 
 use dualkey_core::{DualKeyError, CANONICAL_PREIMAGE_LEN, DIGEST_LEN};
 use solana_account_info::AccountInfo;
@@ -56,6 +57,21 @@ pub fn process(
 
         DualKeyInstruction::ChangePolicy => {
             crate::change_policy::process(program_id, accounts, payload)
+        }
+        DualKeyInstruction::RecoverAccount => {
+            crate::recover::process(program_id, accounts, payload)
+        }
+        DualKeyInstruction::SetRecoveryConfig => {
+            crate::social_recovery::process_set_recovery_config(program_id, accounts, payload)
+        }
+        DualKeyInstruction::InitiateSocialRecovery => {
+            crate::social_recovery::process_initiate_social_recovery(program_id, accounts, payload)
+        }
+        DualKeyInstruction::FinalizeSocialRecovery => {
+            crate::social_recovery::process_finalize_social_recovery(program_id, accounts, payload)
+        }
+        DualKeyInstruction::CancelSocialRecovery => {
+            crate::social_recovery::process_cancel_social_recovery(program_id, accounts, payload)
         }
     }
 }

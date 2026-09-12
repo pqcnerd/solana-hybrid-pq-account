@@ -24,8 +24,10 @@
 use crate::canonical::{ACTION_BODY_LEN, INTENT_VERSION};
 use crate::error::DualKeyError;
 use crate::intent::{
-    Action, AuthorizationIntent, ACTION_TAG_CHANGE_POLICY, ACTION_TAG_ROTATE_ED25519,
-    ACTION_TAG_ROTATE_FALCON, ACTION_TAG_TRANSFER_SOL, ACTION_TAG_TRANSFER_SPL,
+    Action, AuthorizationIntent, RecoveryOp, ACTION_TAG_CANCEL_SOCIAL_RECOVERY,
+    ACTION_TAG_CHANGE_POLICY, ACTION_TAG_RECOVER_ACCOUNT, ACTION_TAG_ROTATE_ED25519,
+    ACTION_TAG_ROTATE_FALCON, ACTION_TAG_SET_RECOVERY_CONFIG, ACTION_TAG_TRANSFER_SOL,
+    ACTION_TAG_TRANSFER_SPL,
 };
 
 /// Wire length of the reconstructable intent fragment (no discriminator, no sig).
@@ -93,6 +95,22 @@ impl ExecuteIntentWire {
                 let body = wire_offsets::ACTION_BODY;
                 out[body] = new_policy;
                 out[body + 8..body + 16].copy_from_slice(&threshold.to_le_bytes());
+            }
+            Action::RecoverAccount { op, new_ed25519 } => {
+                let body = wire_offsets::ACTION_BODY;
+                out[body] = op.as_u8();
+                out[body + 8..body + 40].copy_from_slice(&new_ed25519);
+            }
+            Action::SetRecoveryConfig {
+                guardian_ed25519,
+                delay_slots,
+            } => {
+                let body = wire_offsets::ACTION_BODY;
+                out[body..body + 32].copy_from_slice(&guardian_ed25519);
+                out[body + 32..body + 40].copy_from_slice(&delay_slots.to_le_bytes());
+            }
+            Action::CancelSocialRecovery => {
+                // body remains zero
             }
         }
         out
@@ -188,6 +206,33 @@ impl Action {
                     new_policy,
                     threshold,
                 })
+            }
+            ACTION_TAG_RECOVER_ACCOUNT => {
+                let op = RecoveryOp::from_u8(body[0]).ok_or(DualKeyError::UnsupportedAction)?;
+                let new_ed25519: [u8; 32] = body[8..40]
+                    .try_into()
+                    .map_err(|_| DualKeyError::MalformedInstructionData)?;
+                Ok(Self::RecoverAccount { op, new_ed25519 })
+            }
+            ACTION_TAG_SET_RECOVERY_CONFIG => {
+                let guardian_ed25519: [u8; 32] = body[..32]
+                    .try_into()
+                    .map_err(|_| DualKeyError::MalformedInstructionData)?;
+                let delay_slots = u64::from_le_bytes(
+                    body[32..40]
+                        .try_into()
+                        .map_err(|_| DualKeyError::MalformedInstructionData)?,
+                );
+                Ok(Self::SetRecoveryConfig {
+                    guardian_ed25519,
+                    delay_slots,
+                })
+            }
+            ACTION_TAG_CANCEL_SOCIAL_RECOVERY => {
+                if body.iter().any(|&b| b != 0) {
+                    return Err(DualKeyError::MalformedInstructionData);
+                }
+                Ok(Self::CancelSocialRecovery)
             }
             _ => Err(DualKeyError::UnsupportedAction),
         }

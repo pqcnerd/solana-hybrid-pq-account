@@ -16,6 +16,7 @@ use mollusk_svm::program::loader_keys;
 use mollusk_svm::result::Check;
 use mollusk_svm::Mollusk;
 use mollusk_svm_programs_token::token as mollusk_token;
+use mollusk_svm_programs_token::token2022 as mollusk_token2022;
 use pqcrypto_falcon::falcon512;
 use pqcrypto_traits::sign::PublicKey as _;
 use solana_account::Account;
@@ -497,4 +498,148 @@ fn initialize_stores_account_index_for_pda_signing() {
     let data = &result.get_account(&pda).unwrap().data;
     assert_eq!(HybridAccount::account_index_from_slice(data).unwrap(), 42);
     assert_eq!(data[dualkey_core::account_offsets::BUMP], bump);
+}
+
+// --- Milestone 14: Token-2022 ---
+
+fn mollusk_with_token2022() -> Mollusk {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../target/deploy")
+        .join(format!("{PROGRAM_NAME}.so"));
+    let elf = std::fs::read(&path).unwrap_or_else(|e| {
+        panic!(
+            "cannot read {}: {e}\nrun: cargo-build-sbf --manifest-path program/Cargo.toml",
+            path.display()
+        )
+    });
+    let mut mollusk = Mollusk::default();
+    mollusk.add_program_with_loader_and_elf(&program_id(), &loader_keys::LOADER_V3, &elf);
+    mollusk_token2022::add_program(&mut mollusk);
+    mollusk
+}
+
+fn fixture_token2022(policy: AuthorizationPolicy, nonce: u64) -> Fixture {
+    let mut f = fixture(policy, nonce);
+    // Re-pack mint/token accounts owned by Token-2022.
+    f.mint_account = mollusk_token2022::create_account_for_mint(Mint {
+        mint_authority: COption::None,
+        supply: SOURCE_BALANCE,
+        decimals: 6,
+        is_initialized: true,
+        freeze_authority: COption::None,
+    });
+    f.source_account = mollusk_token2022::create_account_for_token_account(TokenAccount {
+        mint: f.mint,
+        owner: f.account,
+        amount: SOURCE_BALANCE,
+        delegate: COption::None,
+        state: AccountState::Initialized,
+        is_native: COption::None,
+        delegated_amount: 0,
+        close_authority: COption::None,
+    });
+    f.destination_account = mollusk_token2022::create_account_for_token_account(TokenAccount {
+        mint: f.mint,
+        owner: Pubkey::new_from_array([0xD0; 32]),
+        amount: 0,
+        delegate: COption::None,
+        state: AccountState::Initialized,
+        is_native: COption::None,
+        delegated_amount: 0,
+        close_authority: COption::None,
+    });
+    f
+}
+
+fn all_accounts_token2022(f: &Fixture) -> Vec<(Pubkey, Account)> {
+    vec![
+        hybrid_account(f),
+        (
+            f.creator,
+            Account {
+                lamports: 1_000_000,
+                data: vec![],
+                owner: onchain::system_program_id(),
+                executable: false,
+                rent_epoch: 0,
+            },
+        ),
+        (f.source, f.source_account.clone()),
+        (f.mint, f.mint_account.clone()),
+        (f.destination, f.destination_account.clone()),
+        mollusk_token2022::keyed_account(),
+    ]
+}
+
+#[test]
+fn transfer_spl_token2022_base_accounts_under_hybrid_and() {
+    let mollusk = mollusk_with_token2022();
+    let f = fixture_token2022(AuthorizationPolicy::HybridAnd, 2);
+    let intent = intent_for(&f, TRANSFER_AMOUNT);
+    let digest = canonical_digest(&intent);
+    let ed_sig = f.ed.signing_key().sign(&digest).to_bytes();
+    let falcon = falcon_sig(&digest, &f.falcon_secret);
+
+    let ed_ix = onchain::ed25519_precompile_instruction(&digest, &ed_sig, &f.ed.public_bytes());
+    let ex_ix = onchain::execute_transfer_spl_instruction_with_program(
+        &program_id(),
+        &f.account,
+        &f.creator,
+        &f.source,
+        &f.mint,
+        &onchain::token_2022_program_id(),
+        &intent,
+        &falcon,
+    )
+    .unwrap();
+
+    let after = run_tx_result(
+        &mollusk,
+        &[ed_ix, ex_ix],
+        &all_accounts_token2022(&f),
+        &[Check::success()],
+    );
+    let source = after.iter().find(|(k, _)| *k == f.source).unwrap();
+    let dest = after.iter().find(|(k, _)| *k == f.destination).unwrap();
+    assert_eq!(
+        token_amount(&source.1.data),
+        SOURCE_BALANCE - TRANSFER_AMOUNT
+    );
+    assert_eq!(token_amount(&dest.1.data), TRANSFER_AMOUNT);
+}
+
+#[test]
+fn transfer_spl_rejects_token2022_transfer_hook_mint() {
+    let mollusk = mollusk_with_token2022();
+    let mut f = fixture_token2022(AuthorizationPolicy::FalconOnly, 0);
+
+    // Append AccountType + TransferHook TLV onto the mint (hook program id).
+    let mut mint_data = f.mint_account.data.clone();
+    mint_data.push(1); // AccountType::Mint
+    mint_data.extend_from_slice(&14u16.to_le_bytes()); // ExtensionType::TransferHook
+    mint_data.extend_from_slice(&32u16.to_le_bytes());
+    mint_data.extend_from_slice(&[0x77; 32]);
+    f.mint_account.data = mint_data;
+
+    let intent = intent_for(&f, TRANSFER_AMOUNT);
+    let digest = canonical_digest(&intent);
+    let falcon = falcon_sig(&digest, &f.falcon_secret);
+    let ex_ix = onchain::execute_transfer_spl_instruction_with_program(
+        &program_id(),
+        &f.account,
+        &f.creator,
+        &f.source,
+        &f.mint,
+        &onchain::token_2022_program_id(),
+        &intent,
+        &falcon,
+    )
+    .unwrap();
+
+    run_tx(
+        &mollusk,
+        &[ex_ix],
+        &all_accounts_token2022(&f),
+        &[custom(DualKeyError::InvalidAccountData)],
+    );
 }

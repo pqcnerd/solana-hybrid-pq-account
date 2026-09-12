@@ -2,7 +2,7 @@
 //!
 //! Milestone 5–6: Ed25519 / Falcon / HybridAnd verification, expiry, nonce.
 //! Milestone 7: `TransferSol`.
-//! Milestone 11: `TransferSpl` (classic SPL Token CPI via PDA signer).
+//! Milestone 11: `TransferSpl` (SPL Token / Token-2022 CPI via PDA signer).
 //!
 //! Key rotation and policy changes use dedicated instructions; this path only
 //! accepts [`Action::TransferSol`] and [`Action::TransferSpl`].
@@ -36,7 +36,7 @@
 //! | 2 | `source_token` | **writable** — owned by the HybridAccount PDA |
 //! | 3 | `mint` | readonly |
 //! | 4 | `destination_token` | **writable** — must equal the signed destination |
-//! | 5 | `token_program` | readonly — classic SPL Token |
+//! | 5 | `token_program` | readonly — classic Token or Token-2022 |
 //! | 6 | `instructions_sysvar` | readonly |
 
 use dualkey_core::{

@@ -46,7 +46,7 @@ Wrong creator → `InvalidPda`. Source not owned by the PDA →
 
 ### CPI details
 
-- Classic SPL Token only (`Tokenkeg…`); Token-2022 not in scope
+- Classic SPL Token (`Tokenkeg…`); Token-2022 base accounts are Milestone 14
 - Hand-rolled `TransferChecked` (disc 12) — no `spl-token` dep in the program
 - Mint decimals read from the mint account; source/dest mint fields checked
 - `amount == 0` still consumes the nonce (parity with `TransferSol`)
@@ -99,4 +99,5 @@ cargo test --workspace
 cargo test -p dualkey-client --release --test sbf_spl
 ```
 
-Milestone 11 completes the planned DualKey milestone set (0–11).
+Milestone 11 completes the planned DualKey spend/policy surface through SPL.
+See [`milestone-12.md`](milestone-12.md) for RecoverAccount / project completion.

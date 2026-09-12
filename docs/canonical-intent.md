@@ -103,11 +103,32 @@ action_body = new_policy[1] || pad[7] || threshold_u64_le[8] || reserved[24]
 otherwise the threshold flag is cleared. Authorization uses the **stricter** of
 the current and target policies' signature requirements for this action.
 
-Remaining action tags are reserved:
+### Tag `6` — `RecoverAccount` (Milestone 12)
 
-| Tag | Action | Milestone |
-|----:|--------|----------:|
-| 6 | RecoverAccount | reserved |
+```text
+action_body = op[1] || pad[7] || new_ed25519[32]
+```
+
+| `op` | Meaning |
+|-----:|---------|
+| 0 | Enable recovery flag (current policy; `new_ed25519` must be zero) |
+| 1 | Disable recovery flag |
+| 2 | Rotate Ed25519 under Falcon-only auth (flag must already be set) |
+
+### Tag `7` — `SetRecoveryConfig` (Milestone 15)
+
+```text
+action_body = guardian_ed25519[32] || delay_slots_u64_le[8]
+```
+
+### Tag `8` — `CancelSocialRecovery` (Milestone 15)
+
+```text
+action_body = 0⁴⁰
+```
+
+Guardian initiate uses a separate social-recover digest (not this 172-byte
+preimage); see [`milestone-15.md`](milestone-15.md).
 
 ## Shared preimage, separate hashers
 

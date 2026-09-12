@@ -15,8 +15,39 @@ pub const ACTION_TAG_ROTATE_ED25519: u8 = 3;
 pub const ACTION_TAG_ROTATE_FALCON: u8 = 4;
 /// Action discriminator for `ChangePolicy` (Milestone 10).
 pub const ACTION_TAG_CHANGE_POLICY: u8 = 5;
-/// Action discriminator for `RecoverAccount` (reserved; not yet wired).
+/// Action discriminator for `RecoverAccount` (project completion).
 pub const ACTION_TAG_RECOVER_ACCOUNT: u8 = 6;
+/// Action discriminator for `SetRecoveryConfig` (Milestone 15).
+pub const ACTION_TAG_SET_RECOVERY_CONFIG: u8 = 7;
+/// Action discriminator for `CancelSocialRecovery` (Milestone 15).
+pub const ACTION_TAG_CANCEL_SOCIAL_RECOVERY: u8 = 8;
+
+/// Sub-operation for [`Action::RecoverAccount`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+pub enum RecoveryOp {
+    /// Set `FLAG_RECOVERY_ENABLED` (opt in to Falcon-only Ed25519 recovery).
+    Enable = 0,
+    /// Clear `FLAG_RECOVERY_ENABLED`.
+    Disable = 1,
+    /// Replace the Ed25519 owner using **Falcon alone** (requires flag set).
+    RotateEd25519 = 2,
+}
+
+impl RecoveryOp {
+    pub const fn from_u8(value: u8) -> Option<Self> {
+        match value {
+            0 => Some(Self::Enable),
+            1 => Some(Self::Disable),
+            2 => Some(Self::RotateEd25519),
+            _ => None,
+        }
+    }
+
+    pub const fn as_u8(self) -> u8 {
+        self as u8
+    }
+}
 
 /// Authorized action encoded inside an intent.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -73,6 +104,33 @@ pub enum Action {
         /// Lamport threshold for `FalconAboveThreshold` (meaningful only then).
         threshold: u64,
     },
+    /// Recovery controls (project completion).
+    ///
+    /// Wire body: `op[1] ‖ pad[7] ‖ new_ed25519[32]`.
+    ///
+    /// * [`RecoveryOp::Enable`] / [`RecoveryOp::Disable`] — toggle the recovery
+    ///   flag under the **current** policy (privileged).
+    /// * [`RecoveryOp::RotateEd25519`] — requires the flag set; authorized with
+    ///   **Falcon alone** so a lost Ed25519 key can be replaced after opt-in.
+    RecoverAccount {
+        /// Recovery sub-operation.
+        op: RecoveryOp,
+        /// New Ed25519 owner when `op == RotateEd25519`; otherwise zeroed.
+        new_ed25519: [u8; 32],
+    },
+    /// Set / replace social-recovery guardian and delay (Milestone 15).
+    ///
+    /// Wire body: `guardian_ed25519[32] ‖ delay_slots u64 LE`.
+    SetRecoveryConfig {
+        /// Guardian Ed25519 public key (proposes social recovery).
+        guardian_ed25519: [u8; 32],
+        /// Slots that must elapse between initiate and finalize.
+        delay_slots: u64,
+    },
+    /// Cancel a pending social recovery under the current policy (Milestone 15).
+    ///
+    /// Wire body is all zeros (40 bytes reserved).
+    CancelSocialRecovery,
 }
 
 impl Action {
@@ -84,18 +142,25 @@ impl Action {
             Self::RotateEd25519Key { .. } => ACTION_TAG_ROTATE_ED25519,
             Self::RotateFalconKey { .. } => ACTION_TAG_ROTATE_FALCON,
             Self::ChangePolicy { .. } => ACTION_TAG_CHANGE_POLICY,
+            Self::RecoverAccount { .. } => ACTION_TAG_RECOVER_ACCOUNT,
+            Self::SetRecoveryConfig { .. } => ACTION_TAG_SET_RECOVERY_CONFIG,
+            Self::CancelSocialRecovery => ACTION_TAG_CANCEL_SOCIAL_RECOVERY,
         }
     }
 
     /// Whether this action is "privileged" for [`crate::AuthorizationPolicy::FalconForPrivileged`].
     ///
-    /// Transfers (SOL and SPL) are normal; key rotation and policy changes are privileged.
+    /// Transfers (SOL and SPL) are normal; key rotation, policy changes, and
+    /// recovery controls are privileged.
     pub const fn is_privileged(self) -> bool {
         matches!(
             self,
             Self::RotateEd25519Key { .. }
                 | Self::RotateFalconKey { .. }
                 | Self::ChangePolicy { .. }
+                | Self::RecoverAccount { .. }
+                | Self::SetRecoveryConfig { .. }
+                | Self::CancelSocialRecovery
         )
     }
 }

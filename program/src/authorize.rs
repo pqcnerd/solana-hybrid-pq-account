@@ -9,7 +9,7 @@
 //! current and target policies' requirements for that action.
 
 use dualkey_core::{
-    Action, AuthorizationPolicy, DualKeyError, ExecuteIntentWire, HybridAccount,
+    Action, AuthorizationPolicy, DualKeyError, ExecuteIntentWire, HybridAccount, RecoveryOp,
     SignatureRequirement, DIGEST_LEN, EXECUTE_INTENT_WIRE_LEN, FALCON_SIGNATURE_LEN,
 };
 use solana_account_info::AccountInfo;
@@ -60,6 +60,7 @@ pub fn authorize(
     let prepared = *HybridAccount::prepared_falcon_public_key_from_slice(&data)?;
     let account_nonce = HybridAccount::nonce_from_slice(&data)?;
     let threshold = HybridAccount::falcon_required_above_from_slice(&data)?;
+    let recovery_enabled = HybridAccount::recovery_enabled_from_slice(&data)?;
     drop(data);
 
     if ctx.nonce != account_nonce {
@@ -70,7 +71,7 @@ pub fn authorize(
         .checked_add(1)
         .ok_or(DualKeyError::MathOverflow)?;
 
-    let req = effective_requirement(policy, threshold, &wire.action)?;
+    let req = effective_requirement(policy, threshold, recovery_enabled, &wire.action)?;
     let sigs = collect_signatures(
         req,
         instructions_sysvar,
@@ -92,12 +93,24 @@ pub fn authorize(
 /// Compute the signature requirement for this authorization attempt.
 ///
 /// Ordinary actions use the account's current policy. `ChangePolicy` uses the
-/// stricter of current and target.
+/// stricter of current and target. `RecoverAccount::RotateEd25519` requires the
+/// recovery flag and authorizes with **Falcon alone** (opt-in escape hatch).
 fn effective_requirement(
     current: AuthorizationPolicy,
     current_threshold: Option<u64>,
+    recovery_enabled: bool,
     action: &Action,
 ) -> Result<SignatureRequirement, DualKeyError> {
+    if let Action::RecoverAccount { op, .. } = *action {
+        if op == RecoveryOp::RotateEd25519 {
+            if !recovery_enabled {
+                return Err(DualKeyError::InvalidAccountData);
+            }
+            // Opted-in recovery: Falcon alone can replace a lost Ed25519 key.
+            return Ok(SignatureRequirement::Falcon);
+        }
+    }
+
     let current_req = current.signature_requirement(action, current_threshold);
 
     let Action::ChangePolicy {

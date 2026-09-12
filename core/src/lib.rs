@@ -13,6 +13,7 @@ pub mod chain_domain;
 pub mod error;
 pub mod intent;
 pub mod policy;
+pub mod recovery;
 pub mod state;
 pub mod wire;
 
@@ -25,10 +26,19 @@ pub use canonical::{
 pub use chain_domain::{CHAIN_DOMAIN_DEVNET, CHAIN_DOMAIN_LOCALNET, CHAIN_DOMAIN_MAINNET};
 pub use error::DualKeyError;
 pub use intent::{
-    Action, AuthorizationIntent, ACTION_TAG_CHANGE_POLICY, ACTION_TAG_ROTATE_ED25519,
-    ACTION_TAG_ROTATE_FALCON, ACTION_TAG_TRANSFER_SOL, ACTION_TAG_TRANSFER_SPL,
+    Action, AuthorizationIntent, RecoveryOp, ACTION_TAG_CANCEL_SOCIAL_RECOVERY,
+    ACTION_TAG_CHANGE_POLICY, ACTION_TAG_RECOVER_ACCOUNT, ACTION_TAG_ROTATE_ED25519,
+    ACTION_TAG_ROTATE_FALCON, ACTION_TAG_SET_RECOVERY_CONFIG, ACTION_TAG_TRANSFER_SOL,
+    ACTION_TAG_TRANSFER_SPL,
 };
 pub use policy::{AuthorizationPolicy, SignatureRequirement};
+#[cfg(feature = "sha2")]
+pub use recovery::social_recover_digest;
+pub use recovery::{
+    recovery_pda_seeds, social_recover_preimage, RecoveryConfig, RECOVERY_CONFIG_LEN,
+    RECOVERY_CONFIG_VERSION, RECOVERY_PDA_SEED, RECOVERY_PDA_SEED_COUNT,
+    SOCIAL_RECOVER_PREIMAGE_LEN, SOCIAL_RECOVER_TAG,
+};
 pub use state::offsets as account_offsets;
 pub use state::{
     pda_seeds, HybridAccount, ACCOUNT_DATA_LEN, ACCOUNT_INDEX_LEN, ACCOUNT_VERSION,

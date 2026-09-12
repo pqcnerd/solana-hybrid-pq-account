@@ -1,7 +1,8 @@
 //! SPL Token CPI helpers for `TransferSpl`.
 //!
-//! Classic SPL Token only (not Token-2022 extensions). Instruction bytes are
-//! hand-rolled so the program does not depend on `spl-token` / interface crates.
+//! Accepts classic SPL Token **or** Token-2022 for base (non-hook) accounts.
+//! Transfer-hook extensions are refused — DualKey does not resolve extra metas.
+//! Instruction bytes are hand-rolled (no `spl-token` dep in the program).
 
 use dualkey_core::DualKeyError;
 use solana_account_info::AccountInfo;
@@ -16,13 +17,24 @@ use crate::pda;
 pub const TOKEN_PROGRAM_ID: Pubkey =
     Pubkey::from_str_const("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
 
-/// Packed SPL Token account length.
-pub const TOKEN_ACCOUNT_LEN: usize = 165;
-/// Packed SPL Mint length.
-pub const MINT_LEN: usize = 82;
+/// Token-2022 program id (`TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb`).
+pub const TOKEN_2022_PROGRAM_ID: Pubkey =
+    Pubkey::from_str_const("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb");
 
-/// `TransferChecked` instruction discriminator.
+/// Packed SPL Token account length (base, no extensions).
+pub const TOKEN_ACCOUNT_LEN: usize = 165;
+/// Packed SPL Mint length (base, no extensions).
+pub const MINT_LEN: usize = 82;
+/// Multisig packed length — Token-2022 may pad base state up to this before TLV.
+const MULTISIG_LEN: usize = 355;
+
+/// `TransferChecked` instruction discriminator (same for Token and Token-2022).
 const IX_TRANSFER_CHECKED: u8 = 12;
+
+/// `ExtensionType::TransferHook` (mint-side).
+const EXT_TRANSFER_HOOK: u16 = 14;
+/// `ExtensionType::TransferHookAccount` (token-account-side).
+const EXT_TRANSFER_HOOK_ACCOUNT: u16 = 15;
 
 mod token_account_offsets {
     pub const MINT: usize = 0;
@@ -32,6 +44,59 @@ mod token_account_offsets {
 
 mod mint_offsets {
     pub const DECIMALS: usize = 44;
+}
+
+fn is_supported_token_program(id: &Pubkey) -> bool {
+    *id == TOKEN_PROGRAM_ID || *id == TOKEN_2022_PROGRAM_ID
+}
+
+/// Walk Token-2022 TLV after the base mint/account blob; reject transfer hooks.
+///
+/// Layout: `[base || optional zero-pad to 355 || AccountType(1) || TLV…]`.
+/// Classic Token accounts are exactly `base_len` and skip this check.
+fn reject_if_transfer_hook(data: &[u8], base_len: usize) -> Result<(), DualKeyError> {
+    if data.len() <= base_len {
+        return Ok(());
+    }
+
+    let mut tlv_start = base_len;
+    // Optional padding between base and account-type (Token-2022 convention).
+    if data.len() > MULTISIG_LEN
+        && base_len < MULTISIG_LEN
+        && data[base_len..MULTISIG_LEN].iter().all(|&b| b == 0)
+    {
+        tlv_start = MULTISIG_LEN;
+    }
+    // AccountType byte.
+    if tlv_start >= data.len() {
+        return Ok(());
+    }
+    tlv_start += 1;
+
+    let mut i = tlv_start;
+    while i + 4 <= data.len() {
+        let mut ty_buf = [0u8; 2];
+        ty_buf.copy_from_slice(&data[i..i + 2]);
+        let ext_type = u16::from_le_bytes(ty_buf);
+        let mut len_buf = [0u8; 2];
+        len_buf.copy_from_slice(&data[i + 2..i + 4]);
+        let ext_len = u16::from_le_bytes(len_buf) as usize;
+        i += 4;
+        if i + ext_len > data.len() {
+            return Err(DualKeyError::InvalidAccountData);
+        }
+        if ext_type == EXT_TRANSFER_HOOK || ext_type == EXT_TRANSFER_HOOK_ACCOUNT {
+            msg!("DualKey: Token-2022 transfer-hook accounts are not supported");
+            return Err(DualKeyError::InvalidAccountData);
+        }
+        // Uninitialized (0) with zero length ends some TLV buffers; keep scanning
+        // only while there is a real payload or a non-zero type.
+        if ext_type == 0 && ext_len == 0 {
+            break;
+        }
+        i += ext_len;
+    }
+    Ok(())
 }
 
 /// Verify PDA seeds and CPI `transfer_checked` with the HybridAccount as authority.
@@ -53,7 +118,7 @@ pub fn transfer_spl<'a>(
     if source.key == destination.key {
         return Err(DualKeyError::InvalidAccountData);
     }
-    if token_program.key != &TOKEN_PROGRAM_ID {
+    if !is_supported_token_program(token_program.key) {
         return Err(DualKeyError::InvalidProgramAccount);
     }
     if source.owner != token_program.key
@@ -89,6 +154,7 @@ pub fn transfer_spl<'a>(
         if mint_data.len() < MINT_LEN {
             return Err(DualKeyError::InvalidAccountData);
         }
+        reject_if_transfer_hook(&mint_data, MINT_LEN)?;
         mint_data[mint_offsets::DECIMALS]
     };
 
@@ -99,6 +165,7 @@ pub fn transfer_spl<'a>(
         if source_data.len() < TOKEN_ACCOUNT_LEN {
             return Err(DualKeyError::InvalidAccountData);
         }
+        reject_if_transfer_hook(&source_data, TOKEN_ACCOUNT_LEN)?;
         if source_data[token_account_offsets::MINT..token_account_offsets::MINT + 32]
             != mint.key.to_bytes()
         {
@@ -124,6 +191,7 @@ pub fn transfer_spl<'a>(
         if dest_data.len() < TOKEN_ACCOUNT_LEN {
             return Err(DualKeyError::InvalidAccountData);
         }
+        reject_if_transfer_hook(&dest_data, TOKEN_ACCOUNT_LEN)?;
         if dest_data[token_account_offsets::MINT..token_account_offsets::MINT + 32]
             != mint.key.to_bytes()
         {
@@ -186,5 +254,27 @@ fn transfer_checked_instruction(
             AccountMeta::new_readonly(*authority, true),
         ],
         data: data.to_vec(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn base_len_accounts_pass_hook_check() {
+        assert!(reject_if_transfer_hook(&[0u8; MINT_LEN], MINT_LEN).is_ok());
+        assert!(reject_if_transfer_hook(&[0u8; TOKEN_ACCOUNT_LEN], TOKEN_ACCOUNT_LEN).is_ok());
+    }
+
+    #[test]
+    fn transfer_hook_mint_tlv_is_rejected() {
+        // mint base || AccountType(Mint=1) || TLV TransferHook
+        let mut data = vec![0u8; MINT_LEN];
+        data.push(1); // AccountType::Mint
+        data.extend_from_slice(&EXT_TRANSFER_HOOK.to_le_bytes());
+        data.extend_from_slice(&32u16.to_le_bytes()); // program id length
+        data.extend_from_slice(&[0xAB; 32]);
+        assert!(reject_if_transfer_hook(&data, MINT_LEN).is_err());
     }
 }

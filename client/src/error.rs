@@ -69,6 +69,9 @@ pub enum ClientError {
          the program would reject it"
     )]
     PolicyNotImplemented { policy: u8 },
+
+    #[error("rpc error: {0}")]
+    Rpc(String),
 }
 
 pub type Result<T> = std::result::Result<T, ClientError>;

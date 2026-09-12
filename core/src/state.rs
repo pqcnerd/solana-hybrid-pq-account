@@ -215,6 +215,14 @@ impl HybridAccount<'_> {
         buf.copy_from_slice(&data[offsets::ACCOUNT_INDEX..offsets::ACCOUNT_INDEX + 4]);
         Ok(u32::from_le_bytes(buf))
     }
+
+    /// Whether `FLAG_RECOVERY_ENABLED` is set.
+    pub fn recovery_enabled_from_slice(data: &[u8]) -> Result<bool, DualKeyError> {
+        if data.len() != ACCOUNT_DATA_LEN {
+            return Err(DualKeyError::InvalidAccountData);
+        }
+        Ok(data[offsets::FLAGS] & FLAG_RECOVERY_ENABLED != 0)
+    }
 }
 
 impl<'a> HybridAccount<'a> {

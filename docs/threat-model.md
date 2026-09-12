@@ -83,7 +83,11 @@ This document does **not** claim formal security or quantum-proofness.
 |--------|------------|
 | Downgrade HybridAnd → Ed25519Only | `ChangePolicy` authorized under the **stricter** of current and target policies so a stolen Ed25519 key alone cannot disable Falcon |
 | Malicious key rotation | Rotation intents authenticated under current policy; new Falcon key needs PoP; nonce advances |
-| Nonce desynchronization | Client reads on-chain nonce before signing; failed txs do not advance nonce |
+| Lost Ed25519 with recovery enabled | Opt-in `RecoverAccount::RotateEd25519` allows Falcon alone to install a new Ed owner; enabling the flag itself requires current-policy auth |
+| Stolen Falcon while recovery enabled | Can rotate Ed25519 owner — operators should disable recovery when unused |
+| Compromised social-recovery guardian | Can only *propose* a new Ed owner; finalize waits `delay_slots`; DualKey owner can `CancelSocialRecovery` under current policy before the timelock elapses |
+| Token-2022 transfer-hook mint/account | DualKey refuses TransferHook / TransferHookAccount TLV extensions; no hook CPI resolution (base Token-2022 transfers only) |
+| Nonce desynchronization | Client reads on-chain nonce before signing (CLI `--broadcast` path) or requires explicit `--nonce`; failed txs do not advance nonce |
 | Policy not implemented / fallback | Unreachable modes return `PolicyNotImplemented`; HybridAnd never falls back |
 
 ### Availability / resource

@@ -5,14 +5,13 @@
 //! [`dualkey_core::pda_seeds`] and lengths from `dualkey_core`, so the client and
 //! program cannot drift apart.
 //!
-//! Nothing here signs or submits a transaction. It produces the instruction the
-//! program expects; broadcasting needs an RPC endpoint and is out of scope until
-//! the transfer milestone.
+//! Instruction builders only. Milestone 13 CLI broadcast lives in `rpc` /
+//! `submit`; this module stays side-effect free.
 
 use dualkey_core::{
-    pda_seeds, AuthorizationIntent, AuthorizationPolicy, ExecuteIntentWire, IntentContext,
-    ACCOUNT_INDEX_LEN, CHAIN_DOMAIN_LOCALNET, EXECUTE_INTENT_WIRE_LEN, FALCON_SIGNATURE_LEN,
-    FALCON_WIRE_PUBKEY_LEN,
+    pda_seeds, recovery_pda_seeds, AuthorizationIntent, AuthorizationPolicy, ExecuteIntentWire,
+    IntentContext, ACCOUNT_INDEX_LEN, CHAIN_DOMAIN_LOCALNET, EXECUTE_INTENT_WIRE_LEN,
+    FALCON_SIGNATURE_LEN, FALCON_WIRE_PUBKEY_LEN,
 };
 use solana_instruction::{AccountMeta, Instruction};
 use solana_pubkey::Pubkey;
@@ -265,16 +264,48 @@ pub fn token_program_id() -> Pubkey {
     Pubkey::from_str_const("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
 }
 
+/// Token-2022 program id.
+pub fn token_2022_program_id() -> Pubkey {
+    Pubkey::from_str_const("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb")
+}
+
 /// Build `Execute` for [`dualkey_core::Action::TransferSpl`].
 ///
 /// Accounts: HybridAccount, creator (PDA seed), source token, mint, destination
 /// token, token program, instructions sysvar.
+///
+/// `token_program` defaults to classic SPL Token when omitted via
+/// [`token_program_id`]; pass [`token_2022_program_id`] for Token-2022.
 pub fn execute_transfer_spl_instruction(
     program_id: &Pubkey,
     hybrid_account: &Pubkey,
     creator: &Pubkey,
     source_token: &Pubkey,
     mint: &Pubkey,
+    intent: &AuthorizationIntent,
+    falcon_sig: &[u8],
+) -> Result<Instruction> {
+    execute_transfer_spl_instruction_with_program(
+        program_id,
+        hybrid_account,
+        creator,
+        source_token,
+        mint,
+        &token_program_id(),
+        intent,
+        falcon_sig,
+    )
+}
+
+/// Like [`execute_transfer_spl_instruction`] with an explicit token program id.
+#[allow(clippy::too_many_arguments)]
+pub fn execute_transfer_spl_instruction_with_program(
+    program_id: &Pubkey,
+    hybrid_account: &Pubkey,
+    creator: &Pubkey,
+    source_token: &Pubkey,
+    mint: &Pubkey,
+    token_program: &Pubkey,
     intent: &AuthorizationIntent,
     falcon_sig: &[u8],
 ) -> Result<Instruction> {
@@ -298,7 +329,7 @@ pub fn execute_transfer_spl_instruction(
             AccountMeta::new(*source_token, false),
             AccountMeta::new_readonly(*mint, false),
             AccountMeta::new(destination, false),
-            AccountMeta::new_readonly(token_program_id(), false),
+            AccountMeta::new_readonly(*token_program, false),
             AccountMeta::new_readonly(instructions_sysvar_id(), false),
         ],
         data,
@@ -313,6 +344,17 @@ pub const ROTATE_FALCON_DISCRIMINATOR: u8 = 3;
 
 /// Discriminator for `ChangePolicy`.
 pub const CHANGE_POLICY_DISCRIMINATOR: u8 = 4;
+
+/// Discriminator for `RecoverAccount`.
+pub const RECOVER_ACCOUNT_DISCRIMINATOR: u8 = 5;
+/// Discriminator for `SetRecoveryConfig`.
+pub const SET_RECOVERY_CONFIG_DISCRIMINATOR: u8 = 6;
+/// Discriminator for `InitiateSocialRecovery`.
+pub const INITIATE_SOCIAL_RECOVERY_DISCRIMINATOR: u8 = 7;
+/// Discriminator for `FinalizeSocialRecovery`.
+pub const FINALIZE_SOCIAL_RECOVERY_DISCRIMINATOR: u8 = 8;
+/// Discriminator for `CancelSocialRecovery`.
+pub const CANCEL_SOCIAL_RECOVERY_DISCRIMINATOR: u8 = 9;
 
 /// Full `RotateFalconKey` instruction data length.
 pub const ROTATE_FALCON_DATA_LEN: usize = 1
@@ -455,6 +497,43 @@ pub fn change_policy_instruction(
     })
 }
 
+/// Build `RecoverAccount` (discriminator 5). Payload shape matches Execute.
+pub fn recover_account_instruction(
+    program_id: &Pubkey,
+    hybrid_account: &Pubkey,
+    intent: &AuthorizationIntent,
+    falcon_sig: &[u8],
+) -> Result<Instruction> {
+    match intent.action {
+        dualkey_core::Action::RecoverAccount { .. } => {}
+        _ => {
+            return Err(ClientError::IntentFormat {
+                path: "recover_account".into(),
+                reason: "intent action must be RecoverAccount".into(),
+            });
+        }
+    }
+    let mut data = Vec::with_capacity(EXECUTE_DATA_LEN);
+    data.push(RECOVER_ACCOUNT_DISCRIMINATOR);
+    data.extend_from_slice(&encode_execute_intent_wire(intent));
+    if falcon_sig.len() != FALCON_SIGNATURE_LEN {
+        return Err(ClientError::KeyFileLength {
+            path: "falcon signature".to_string(),
+            expected: FALCON_SIGNATURE_LEN,
+            actual: falcon_sig.len(),
+        });
+    }
+    data.extend_from_slice(falcon_sig);
+    Ok(Instruction {
+        program_id: *program_id,
+        accounts: vec![
+            AccountMeta::new(*hybrid_account, false),
+            AccountMeta::new_readonly(instructions_sysvar_id(), false),
+        ],
+        data,
+    })
+}
+
 /// Build an Ed25519 precompile instruction over `message`.
 ///
 /// For DualKey authorization, `message` is the 32-byte intent digest.
@@ -464,4 +543,130 @@ pub fn ed25519_precompile_instruction(
     pubkey: &[u8; 32],
 ) -> Instruction {
     solana_ed25519_program::new_ed25519_instruction_with_signature(message, signature, pubkey)
+}
+
+/// Derive the RecoveryConfig PDA for a HybridAccount.
+pub fn derive_recovery_config(
+    program_id: &Pubkey,
+    hybrid_account: &Pubkey,
+) -> Result<(Pubkey, u8)> {
+    let hybrid_bytes = hybrid_account.to_bytes();
+    let seeds = recovery_pda_seeds(&hybrid_bytes);
+    Pubkey::try_find_program_address(&seeds, program_id).ok_or(ClientError::PdaDerivation)
+}
+
+fn encode_auth_payload(intent: &AuthorizationIntent, falcon_sig: &[u8]) -> Result<Vec<u8>> {
+    if falcon_sig.len() != FALCON_SIGNATURE_LEN {
+        return Err(ClientError::KeyFileLength {
+            path: "falcon signature".to_string(),
+            expected: FALCON_SIGNATURE_LEN,
+            actual: falcon_sig.len(),
+        });
+    }
+    let mut data = Vec::with_capacity(EXECUTE_DATA_LEN);
+    data.extend_from_slice(&encode_execute_intent_wire(intent));
+    data.extend_from_slice(falcon_sig);
+    Ok(data)
+}
+
+/// Build `SetRecoveryConfig` (discriminator 6).
+pub fn set_recovery_config_instruction(
+    program_id: &Pubkey,
+    hybrid_account: &Pubkey,
+    recovery_config: &Pubkey,
+    payer: &Pubkey,
+    intent: &AuthorizationIntent,
+    falcon_sig: &[u8],
+) -> Result<Instruction> {
+    match intent.action {
+        dualkey_core::Action::SetRecoveryConfig { .. } => {}
+        _ => {
+            return Err(ClientError::IntentFormat {
+                path: "set_recovery_config".into(),
+                reason: "intent action must be SetRecoveryConfig".into(),
+            });
+        }
+    }
+    let mut data = Vec::with_capacity(EXECUTE_DATA_LEN);
+    data.push(SET_RECOVERY_CONFIG_DISCRIMINATOR);
+    data.extend_from_slice(&encode_auth_payload(intent, falcon_sig)?);
+    Ok(Instruction {
+        program_id: *program_id,
+        accounts: vec![
+            AccountMeta::new(*hybrid_account, false),
+            AccountMeta::new(*recovery_config, false),
+            AccountMeta::new(*payer, true),
+            AccountMeta::new_readonly(system_program_id(), false),
+            AccountMeta::new_readonly(instructions_sysvar_id(), false),
+        ],
+        data,
+    })
+}
+
+/// Build `InitiateSocialRecovery` (discriminator 7): data = new_ed25519[32].
+pub fn initiate_social_recovery_instruction(
+    program_id: &Pubkey,
+    hybrid_account: &Pubkey,
+    recovery_config: &Pubkey,
+    new_ed25519: &[u8; 32],
+) -> Instruction {
+    let mut data = Vec::with_capacity(33);
+    data.push(INITIATE_SOCIAL_RECOVERY_DISCRIMINATOR);
+    data.extend_from_slice(new_ed25519);
+    Instruction {
+        program_id: *program_id,
+        accounts: vec![
+            AccountMeta::new_readonly(*hybrid_account, false),
+            AccountMeta::new(*recovery_config, false),
+            AccountMeta::new_readonly(instructions_sysvar_id(), false),
+        ],
+        data,
+    }
+}
+
+/// Build `FinalizeSocialRecovery` (discriminator 8).
+pub fn finalize_social_recovery_instruction(
+    program_id: &Pubkey,
+    hybrid_account: &Pubkey,
+    recovery_config: &Pubkey,
+) -> Instruction {
+    Instruction {
+        program_id: *program_id,
+        accounts: vec![
+            AccountMeta::new(*hybrid_account, false),
+            AccountMeta::new(*recovery_config, false),
+        ],
+        data: vec![FINALIZE_SOCIAL_RECOVERY_DISCRIMINATOR],
+    }
+}
+
+/// Build `CancelSocialRecovery` (discriminator 9).
+pub fn cancel_social_recovery_instruction(
+    program_id: &Pubkey,
+    hybrid_account: &Pubkey,
+    recovery_config: &Pubkey,
+    intent: &AuthorizationIntent,
+    falcon_sig: &[u8],
+) -> Result<Instruction> {
+    match intent.action {
+        dualkey_core::Action::CancelSocialRecovery => {}
+        _ => {
+            return Err(ClientError::IntentFormat {
+                path: "cancel_social_recovery".into(),
+                reason: "intent action must be CancelSocialRecovery".into(),
+            });
+        }
+    }
+    let mut data = Vec::with_capacity(EXECUTE_DATA_LEN);
+    data.push(CANCEL_SOCIAL_RECOVERY_DISCRIMINATOR);
+    data.extend_from_slice(&encode_auth_payload(intent, falcon_sig)?);
+    Ok(Instruction {
+        program_id: *program_id,
+        accounts: vec![
+            AccountMeta::new(*hybrid_account, false),
+            AccountMeta::new(*recovery_config, false),
+            AccountMeta::new_readonly(instructions_sysvar_id(), false),
+        ],
+        data,
+    })
 }

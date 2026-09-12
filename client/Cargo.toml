@@ -39,6 +39,16 @@ solana-system-interface = "3"
 # Ed25519 precompile instruction builder (Milestone 5 HybridAnd client path).
 solana-ed25519-program = "3"
 solana-sdk-ids = "3"
+# Milestone 13: legacy tx assembly + JSON-RPC broadcast.
+solana-transaction = { version = "4.1", features = ["serde"] }
+solana-keypair = "3.1"
+solana-signer = "3"
+solana-hash = "4"
+solana-message = "4"
+solana-signature = "3"
+bincode = "1"
+base64 = "0.22"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 
 ed25519-dalek = "2"
 rand = "0.8"
@@ -58,7 +68,7 @@ tempfile = "3"
 # `target/deploy/dualkey_program.so`, so the program is exercised as a real
 # SBF binary rather than as host Rust.
 mollusk-svm = { version = "0.15", features = ["precompiles"] }
-mollusk-svm-programs-token = { version = "0.15", default-features = false, features = ["token"] }
+mollusk-svm-programs-token = { version = "0.15", default-features = false, features = ["token", "token-2022"] }
 # Version-matched to mollusk-svm 0.15's own dependencies so the `Instruction`,
 # `Account` and `ProgramError` types are identical, not merely similar.
 solana-account = "4.3"
@@ -67,8 +77,5 @@ solana-program-pack = "3"
 solana-program-option = "3"
 spl-token-interface = "2"
 # Legacy transaction serialization for Milestone 8 size measurements.
-solana-transaction = { version = "4.1", features = ["serde"] }
-solana-signature = "3"
-bincode = "1"
 # Instruction discriminators, so renumbering the harness updates the tests.
 dualkey-program = { path = "../program" }

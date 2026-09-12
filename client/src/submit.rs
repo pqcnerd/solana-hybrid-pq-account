@@ -1,20 +1,22 @@
 //! Instruction construction for on-chain operations.
 //!
-//! `Initialize` and `Transfer` build inspectable instruction artifacts offline.
-//! Broadcasting still needs an RPC endpoint and a funded payer; emitting the
-//! instructions keeps the path testable without a live cluster.
+//! Builds inspectable instruction artifacts offline. With `--broadcast`,
+//! Milestone 13 submits them via JSON-RPC.
 
 use std::path::Path;
 
-use dualkey_core::{canonical_digest, Action, AuthorizationPolicy};
+use dualkey_core::{canonical_digest, Action, AuthorizationPolicy, RecoveryOp};
 use ed25519_dalek::Signer;
 use serde::Serialize;
+use solana_instruction::Instruction;
 use solana_pubkey::Pubkey;
+use solana_signer::Signer as _;
 
 use crate::error::{ClientError, Result};
 use crate::falcon_interop;
 use crate::keys::{Ed25519Keypair, FalconKeypair, KeyPaths, PublicKeys};
 use crate::onchain;
+use crate::rpc::{self, BroadcastOpts, Rpc};
 
 /// A built instruction, rendered for inspection or offline signing.
 ///
@@ -35,6 +37,8 @@ pub struct InitializeArtifact {
     pub accounts: Vec<AccountMetaJson>,
     pub data_len: usize,
     pub data_hex: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -62,15 +66,16 @@ impl InitializeArtifact {
             self.falcon512_public_key_sha256
         ));
         s.push_str(&format!("Instruction data: {} bytes\n", self.data_len));
-        s.push_str("\nNot submitted. Broadcasting requires an RPC endpoint and a funded\n");
-        s.push_str("creator; this milestone builds the instruction only.\n");
+        if let Some(sig) = &self.signature {
+            s.push_str(&format!("Submitted:        {sig}\n"));
+        } else {
+            s.push_str("\nNot submitted. Pass --broadcast --rpc-url --payer to submit.\n");
+        }
         s
     }
 }
 
 /// Offline HybridAnd transfer transaction fragment (Ed25519 precompile + Execute).
-///
-/// Public material only: signatures and addresses, never secret keys.
 #[derive(Debug, Serialize)]
 pub struct TransferArtifact {
     pub format: &'static str,
@@ -84,6 +89,8 @@ pub struct TransferArtifact {
     pub ed25519_precompile_data_hex: String,
     pub execute_data_hex: String,
     pub execute_accounts: Vec<AccountMetaJson>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
 }
 
 impl TransferArtifact {
@@ -104,18 +111,28 @@ impl TransferArtifact {
             "Execute ix:    {} bytes\n",
             self.execute_data_hex.len() / 2
         ));
-        s.push_str("\nNot submitted. Include the Ed25519 precompile immediately before\n");
-        s.push_str("Execute in the same transaction. Broadcasting needs RPC + payer.\n");
+        if let Some(sig) = &self.signature {
+            s.push_str(&format!("Submitted:     {sig}\n"));
+        } else {
+            s.push_str("\nNot submitted. Pass --broadcast --rpc-url --payer to submit.\n");
+            s.push_str("Ed25519 precompile must immediately precede Execute.\n");
+        }
         s
     }
 }
 
+fn metas(ix: &Instruction) -> Vec<AccountMetaJson> {
+    ix.accounts
+        .iter()
+        .map(|m| AccountMetaJson {
+            pubkey: m.pubkey.to_string(),
+            is_signer: m.is_signer,
+            is_writable: m.is_writable,
+        })
+        .collect()
+}
+
 /// Build the `Initialize` instruction for a HybridAccount PDA.
-///
-/// `creator` is the fee payer and a PDA seed. It must sign the transaction, so
-/// it is supplied as an address rather than read from the key directory: the
-/// creator is typically an existing funded Solana wallet, not the Ed25519 owner
-/// key DualKey generates.
 pub fn init(
     keys_dir: &Path,
     account_index: u32,
@@ -123,11 +140,10 @@ pub fn init(
     creator: &str,
     policy: AuthorizationPolicy,
     out: Option<&Path>,
+    broadcast: &BroadcastOpts,
 ) -> Result<()> {
     let program_id = parse_pubkey("program_id", program_id)?;
     let creator = parse_pubkey("creator", creator)?;
-
-    // Public keys only: this path never opens a secret key file.
     let public = PublicKeys::load(&KeyPaths::new(keys_dir))?;
 
     let (instruction, hybrid_account, bump) = onchain::initialize_instruction(
@@ -138,6 +154,24 @@ pub fn init(
         policy,
         public.falcon_wire(),
     )?;
+
+    let mut signature = None;
+    if broadcast.broadcast {
+        let (url, payer_path) = broadcast.require_for_broadcast()?;
+        let rpc = Rpc::new(url);
+        let payer = rpc::load_payer(payer_path)?;
+        if payer.pubkey() != creator {
+            return Err(ClientError::IntentFormat {
+                path: "payer".into(),
+                reason: "payer pubkey must equal --creator for Initialize".into(),
+            });
+        }
+        signature = Some(rpc::send_instructions(
+            &rpc,
+            &payer,
+            std::slice::from_ref(&instruction),
+        )?);
+    }
 
     let artifact = InitializeArtifact {
         format: "dualkey-initialize-v1",
@@ -150,23 +184,13 @@ pub fn init(
         policy_name: policy.name(),
         owner_ed25519: hex::encode(public.ed25519()),
         falcon512_public_key_sha256: hex::encode(public.falcon_public_key_hash()),
-        accounts: instruction
-            .accounts
-            .iter()
-            .map(|m| AccountMetaJson {
-                pubkey: m.pubkey.to_string(),
-                is_signer: m.is_signer,
-                is_writable: m.is_writable,
-            })
-            .collect(),
+        accounts: metas(&instruction),
         data_len: instruction.data.len(),
         data_hex: hex::encode(&instruction.data),
+        signature,
     };
 
     print!("{}", artifact.render());
-
-    // The artifact holds public material only, so it is written 0644 like the
-    // other public files.
     if let Some(path) = out {
         let json = serde_json::to_vec_pretty(&artifact)?;
         crate::keys::write_with_mode(path, &json, crate::keys::PUBLIC_MODE)?;
@@ -188,15 +212,13 @@ pub struct TransferParams<'a> {
     pub hybrid_account: &'a str,
     pub recipient: &'a str,
     pub lamports: u64,
-    pub nonce: u64,
+    pub nonce: Option<u64>,
     pub expiry_slot: u64,
     pub out: Option<&'a Path>,
+    pub broadcast: BroadcastOpts,
 }
 
-/// Build a HybridAnd-authorized `TransferSol` instruction pair offline.
-///
-/// Signs the canonical digest with both schemes, emits the Ed25519 precompile
-/// instruction and the DualKey `Execute` instruction. Does **not** broadcast.
+/// Build a HybridAnd-authorized `TransferSol` instruction pair.
 pub fn transfer(params: TransferParams<'_>) -> Result<()> {
     let TransferParams {
         keys_dir,
@@ -207,6 +229,7 @@ pub fn transfer(params: TransferParams<'_>) -> Result<()> {
         nonce,
         expiry_slot,
         out,
+        broadcast,
     } = params;
 
     let program_id = parse_pubkey("program_id", program_id)?;
@@ -216,6 +239,22 @@ pub fn transfer(params: TransferParams<'_>) -> Result<()> {
     let paths = KeyPaths::new(keys_dir);
     let ed = Ed25519Keypair::load(&paths)?;
     let falcon = FalconKeypair::load(&paths)?;
+
+    let nonce = match nonce {
+        Some(n) => n,
+        None => {
+            let (url, _) =
+                broadcast
+                    .require_for_broadcast()
+                    .map_err(|_| ClientError::IntentFormat {
+                        path: "nonce".into(),
+                        reason:
+                            "--nonce is required unless --broadcast --rpc-url is set (reads chain)"
+                                .into(),
+                    })?;
+            Rpc::new(url).get_hybrid_nonce(&hybrid_account)?
+        }
+    };
 
     let intent = onchain::signing_intent(
         &program_id,
@@ -235,6 +274,18 @@ pub fn transfer(params: TransferParams<'_>) -> Result<()> {
     let exec_ix =
         onchain::execute_instruction(&program_id, &hybrid_account, &intent, wire.as_wire_bytes())?;
 
+    let mut signature = None;
+    if broadcast.broadcast {
+        let (url, payer_path) = broadcast.require_for_broadcast()?;
+        let rpc = Rpc::new(url);
+        let payer = rpc::load_payer(payer_path)?;
+        signature = Some(rpc::send_instructions(
+            &rpc,
+            &payer,
+            &[ed_ix.clone(), exec_ix.clone()],
+        )?);
+    }
+
     let artifact = TransferArtifact {
         format: "dualkey-transfer-v1",
         program_id: program_id.to_string(),
@@ -246,23 +297,272 @@ pub fn transfer(params: TransferParams<'_>) -> Result<()> {
         digest: hex::encode(digest),
         ed25519_precompile_data_hex: hex::encode(&ed_ix.data),
         execute_data_hex: hex::encode(&exec_ix.data),
-        execute_accounts: exec_ix
-            .accounts
-            .iter()
-            .map(|m| AccountMetaJson {
-                pubkey: m.pubkey.to_string(),
-                is_signer: m.is_signer,
-                is_writable: m.is_writable,
-            })
-            .collect(),
+        execute_accounts: metas(&exec_ix),
+        signature,
     };
 
     print!("{}", artifact.render());
-
     if let Some(path) = out {
         let json = serde_json::to_vec_pretty(&artifact)?;
         crate::keys::write_with_mode(path, &json, crate::keys::PUBLIC_MODE)?;
         println!("Transfer artifact written to {}", path.display());
+    }
+    Ok(())
+}
+
+/// Shared params for DualKey-authorized lifecycle instructions (716-byte shape).
+pub struct LifecycleParams<'a> {
+    pub keys_dir: &'a Path,
+    pub program_id: &'a str,
+    pub hybrid_account: &'a str,
+    pub nonce: Option<u64>,
+    pub expiry_slot: u64,
+    pub broadcast: BroadcastOpts,
+    pub out: Option<&'a Path>,
+}
+
+fn resolve_nonce(hybrid: &Pubkey, nonce: Option<u64>, broadcast: &BroadcastOpts) -> Result<u64> {
+    match nonce {
+        Some(n) => Ok(n),
+        None => {
+            let (url, _) =
+                broadcast
+                    .require_for_broadcast()
+                    .map_err(|_| ClientError::IntentFormat {
+                        path: "nonce".into(),
+                        reason: "--nonce required unless --broadcast --rpc-url is set".into(),
+                    })?;
+            Rpc::new(url).get_hybrid_nonce(hybrid)
+        }
+    }
+}
+
+fn sign_lifecycle(
+    params: &LifecycleParams<'_>,
+    action: Action,
+    build_ix: impl FnOnce(
+        &Pubkey,
+        &Pubkey,
+        &dualkey_core::AuthorizationIntent,
+        &[u8],
+    ) -> Result<Instruction>,
+) -> Result<()> {
+    let program_id = parse_pubkey("program_id", params.program_id)?;
+    let hybrid_account = parse_pubkey("account", params.hybrid_account)?;
+    let paths = KeyPaths::new(params.keys_dir);
+    let ed = Ed25519Keypair::load(&paths)?;
+    let falcon = FalconKeypair::load(&paths)?;
+    let nonce = resolve_nonce(&hybrid_account, params.nonce, &params.broadcast)?;
+
+    let intent = onchain::signing_intent(
+        &program_id,
+        &hybrid_account,
+        nonce,
+        params.expiry_slot,
+        action,
+    );
+    let digest = canonical_digest(&intent);
+    let ed_sig = ed.signing_key().sign(&digest).to_bytes();
+    let (_pq, wire) = falcon_interop::sign_to_wire(&digest, falcon.secret())?;
+    let ed_ix = onchain::ed25519_precompile_instruction(&digest, &ed_sig, &ed.public_bytes());
+    let ix = build_ix(&program_id, &hybrid_account, &intent, wire.as_wire_bytes())?;
+
+    let mut signature = None;
+    if params.broadcast.broadcast {
+        let (url, payer_path) = params.broadcast.require_for_broadcast()?;
+        let rpc = Rpc::new(url);
+        let payer = rpc::load_payer(payer_path)?;
+        // HybridAnd / Both: include Ed25519 precompile. Falcon-only paths still
+        // tolerate a preceding precompile being absent when requirement is Falcon;
+        // for lifecycle under HybridAnd we always send both.
+        signature = Some(rpc::send_instructions(
+            &rpc,
+            &payer,
+            &[ed_ix.clone(), ix.clone()],
+        )?);
+    }
+
+    println!("Digest:    {}", hex::encode(digest));
+    println!("Nonce:     {nonce}");
+    println!("Ix data:   {} bytes", ix.data.len());
+    if let Some(ref sig) = signature {
+        println!("Submitted: {sig}");
+    } else {
+        println!("Not submitted. Pass --broadcast --rpc-url --payer to submit.");
+    }
+    if let Some(path) = params.out {
+        let json = serde_json::json!({
+            "digest": hex::encode(digest),
+            "nonce": nonce,
+            "ed25519_precompile_data_hex": hex::encode(&ed_ix.data),
+            "instruction_data_hex": hex::encode(&ix.data),
+            "signature": signature,
+        });
+        crate::keys::write_with_mode(
+            path,
+            &serde_json::to_vec_pretty(&json)?,
+            crate::keys::PUBLIC_MODE,
+        )?;
+        println!("Artifact written to {}", path.display());
+    }
+    Ok(())
+}
+
+pub fn change_policy(
+    params: LifecycleParams<'_>,
+    new_policy: AuthorizationPolicy,
+    threshold: u64,
+) -> Result<()> {
+    sign_lifecycle(
+        &params,
+        Action::ChangePolicy {
+            new_policy: new_policy.as_u8(),
+            threshold,
+        },
+        onchain::change_policy_instruction,
+    )
+}
+
+pub fn recover_enable(params: LifecycleParams<'_>) -> Result<()> {
+    sign_lifecycle(
+        &params,
+        Action::RecoverAccount {
+            op: RecoveryOp::Enable,
+            new_ed25519: [0u8; 32],
+        },
+        onchain::recover_account_instruction,
+    )
+}
+
+pub fn recover_disable(params: LifecycleParams<'_>) -> Result<()> {
+    sign_lifecycle(
+        &params,
+        Action::RecoverAccount {
+            op: RecoveryOp::Disable,
+            new_ed25519: [0u8; 32],
+        },
+        onchain::recover_account_instruction,
+    )
+}
+
+pub fn recover_rotate_ed25519(params: LifecycleParams<'_>, new_owner: &str) -> Result<()> {
+    let new_ed25519 = parse_pubkey("new-owner", new_owner)?.to_bytes();
+    sign_lifecycle(
+        &params,
+        Action::RecoverAccount {
+            op: RecoveryOp::RotateEd25519,
+            new_ed25519,
+        },
+        onchain::recover_account_instruction,
+    )
+}
+
+pub fn rotate_ed25519(params: LifecycleParams<'_>, new_owner: &str) -> Result<()> {
+    let new_pubkey = parse_pubkey("new-owner", new_owner)?.to_bytes();
+    sign_lifecycle(
+        &params,
+        Action::RotateEd25519Key { new_pubkey },
+        onchain::rotate_ed25519_instruction,
+    )
+}
+
+/// Parameters for [`transfer_spl`].
+pub struct TransferSplParams<'a> {
+    pub keys_dir: &'a Path,
+    pub program_id: &'a str,
+    pub hybrid_account: &'a str,
+    pub creator: &'a str,
+    pub source: &'a str,
+    pub mint: &'a str,
+    pub destination: &'a str,
+    pub amount: u64,
+    pub nonce: Option<u64>,
+    pub expiry_slot: u64,
+    pub token_2022: bool,
+    pub broadcast: BroadcastOpts,
+    pub out: Option<&'a Path>,
+}
+
+/// Build (and optionally broadcast) a HybridAnd-authorized `TransferSpl`.
+pub fn transfer_spl(params: TransferSplParams<'_>) -> Result<()> {
+    let program_id = parse_pubkey("program_id", params.program_id)?;
+    let hybrid_account = parse_pubkey("account", params.hybrid_account)?;
+    let creator = parse_pubkey("creator", params.creator)?;
+    let source = parse_pubkey("source", params.source)?;
+    let mint = parse_pubkey("mint", params.mint)?;
+    let destination = parse_pubkey("destination", params.destination)?;
+    let token_program = if params.token_2022 {
+        onchain::token_2022_program_id()
+    } else {
+        onchain::token_program_id()
+    };
+
+    let paths = KeyPaths::new(params.keys_dir);
+    let ed = Ed25519Keypair::load(&paths)?;
+    let falcon = FalconKeypair::load(&paths)?;
+    let nonce = resolve_nonce(&hybrid_account, params.nonce, &params.broadcast)?;
+
+    let intent = onchain::signing_intent(
+        &program_id,
+        &hybrid_account,
+        nonce,
+        params.expiry_slot,
+        Action::TransferSpl {
+            destination: destination.to_bytes(),
+            amount: params.amount,
+        },
+    );
+    let digest = canonical_digest(&intent);
+    let ed_sig = ed.signing_key().sign(&digest).to_bytes();
+    let (_pq, wire) = falcon_interop::sign_to_wire(&digest, falcon.secret())?;
+    let ed_ix = onchain::ed25519_precompile_instruction(&digest, &ed_sig, &ed.public_bytes());
+    let exec_ix = onchain::execute_transfer_spl_instruction_with_program(
+        &program_id,
+        &hybrid_account,
+        &creator,
+        &source,
+        &mint,
+        &token_program,
+        &intent,
+        wire.as_wire_bytes(),
+    )?;
+
+    let mut signature = None;
+    if params.broadcast.broadcast {
+        let (url, payer_path) = params.broadcast.require_for_broadcast()?;
+        let rpc = Rpc::new(url);
+        let payer = rpc::load_payer(payer_path)?;
+        signature = Some(rpc::send_instructions(
+            &rpc,
+            &payer,
+            &[ed_ix.clone(), exec_ix.clone()],
+        )?);
+    }
+
+    println!("Digest:    {}", hex::encode(digest));
+    println!("Nonce:     {nonce}");
+    println!("Token prog: {token_program}");
+    println!("Execute:   {} bytes", exec_ix.data.len());
+    if let Some(ref sig) = signature {
+        println!("Submitted: {sig}");
+    } else {
+        println!("Not submitted. Pass --broadcast --rpc-url --payer to submit.");
+    }
+    if let Some(path) = params.out {
+        let json = serde_json::json!({
+            "digest": hex::encode(digest),
+            "nonce": nonce,
+            "token_program": token_program.to_string(),
+            "ed25519_precompile_data_hex": hex::encode(&ed_ix.data),
+            "execute_data_hex": hex::encode(&exec_ix.data),
+            "signature": signature,
+        });
+        crate::keys::write_with_mode(
+            path,
+            &serde_json::to_vec_pretty(&json)?,
+            crate::keys::PUBLIC_MODE,
+        )?;
+        println!("Artifact written to {}", path.display());
     }
     Ok(())
 }

@@ -8,7 +8,7 @@
 
 use std::path::Path;
 
-use dualkey_core::{Action, AuthorizationIntent, INTENT_VERSION};
+use dualkey_core::{Action, AuthorizationIntent, RecoveryOp, INTENT_VERSION};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{ClientError, Result};
@@ -16,11 +16,33 @@ use crate::error::{ClientError, Result};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ActionSpec {
-    TransferSol { recipient: String, lamports: u64 },
-    TransferSpl { destination: String, amount: u64 },
-    RotateEd25519Key { new_pubkey: String },
-    RotateFalconKey { new_pubkey_hash: String },
-    ChangePolicy { new_policy: u8, threshold: u64 },
+    TransferSol {
+        recipient: String,
+        lamports: u64,
+    },
+    TransferSpl {
+        destination: String,
+        amount: u64,
+    },
+    RotateEd25519Key {
+        new_pubkey: String,
+    },
+    RotateFalconKey {
+        new_pubkey_hash: String,
+    },
+    ChangePolicy {
+        new_policy: u8,
+        threshold: u64,
+    },
+    RecoverAccount {
+        op: u8,
+        new_ed25519: String,
+    },
+    SetRecoveryConfig {
+        guardian_ed25519: String,
+        delay_slots: u64,
+    },
+    CancelSocialRecovery,
 }
 
 /// JSON representation of an [`AuthorizationIntent`].
@@ -79,6 +101,24 @@ impl IntentSpec {
                 new_policy: *new_policy,
                 threshold: *threshold,
             },
+            ActionSpec::RecoverAccount { op, new_ed25519 } => {
+                let op = RecoveryOp::from_u8(*op).ok_or_else(|| ClientError::IntentFormat {
+                    path: "action.op".into(),
+                    reason: format!("unknown recovery op {op}"),
+                })?;
+                Action::RecoverAccount {
+                    op,
+                    new_ed25519: hex32("action.new_ed25519", new_ed25519)?,
+                }
+            }
+            ActionSpec::SetRecoveryConfig {
+                guardian_ed25519,
+                delay_slots,
+            } => Action::SetRecoveryConfig {
+                guardian_ed25519: hex32("action.guardian_ed25519", guardian_ed25519)?,
+                delay_slots: *delay_slots,
+            },
+            ActionSpec::CancelSocialRecovery => Action::CancelSocialRecovery,
         };
 
         Ok(AuthorizationIntent {
@@ -122,6 +162,18 @@ impl IntentSpec {
                 new_policy,
                 threshold,
             },
+            Action::RecoverAccount { op, new_ed25519 } => ActionSpec::RecoverAccount {
+                op: op.as_u8(),
+                new_ed25519: hex::encode(new_ed25519),
+            },
+            Action::SetRecoveryConfig {
+                guardian_ed25519,
+                delay_slots,
+            } => ActionSpec::SetRecoveryConfig {
+                guardian_ed25519: hex::encode(guardian_ed25519),
+                delay_slots,
+            },
+            Action::CancelSocialRecovery => ActionSpec::CancelSocialRecovery,
         };
         Self {
             version: intent.version,

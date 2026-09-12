@@ -3,6 +3,7 @@
 //! Never prints secret key material.
 
 use clap::{Parser, Subcommand};
+use dualkey_client::rpc::BroadcastOpts;
 use dualkey_client::{keygen, sign, submit};
 use dualkey_core::AuthorizationPolicy;
 use std::path::PathBuf;
@@ -16,6 +17,33 @@ struct Cli {
     #[command(subcommand)]
     command: Commands,
 }
+
+/// Shared RPC / broadcast flags (Milestone 13). Default remains offline artifacts.
+#[derive(clap::Args, Debug, Clone)]
+struct RpcArgs {
+    /// Submit the built transaction to a cluster (default: print artifacts only).
+    #[arg(long, default_value_t = false)]
+    broadcast: bool,
+    /// Solana JSON-RPC URL (required with `--broadcast`).
+    #[arg(long)]
+    rpc_url: Option<String>,
+    /// Payer keypair JSON path (required with `--broadcast`). Never printed.
+    #[arg(long)]
+    payer: Option<PathBuf>,
+}
+
+impl RpcArgs {
+    fn opts(&self) -> BroadcastOpts {
+        BroadcastOpts {
+            broadcast: self.broadcast,
+            rpc_url: self.rpc_url.clone(),
+            payer_path: self.payer.clone(),
+        }
+    }
+}
+
+const POLICY_HELP: &str = "ed25519-only, falcon-only, hybrid-and, hybrid-or, \
+    falcon-for-privileged, falcon-above-threshold";
 
 #[derive(Subcommand, Debug)]
 enum Commands {
@@ -44,9 +72,7 @@ enum Commands {
         #[arg(long)]
         input: PathBuf,
     },
-    /// Build the Initialize instruction for a DualKey HybridAccount PDA.
-    ///
-    /// Prints the derived address and instruction; does not broadcast.
+    /// Build (and optionally broadcast) Initialize for a HybridAccount PDA.
     Init {
         #[arg(long, default_value = "keys")]
         keys: PathBuf,
@@ -59,17 +85,16 @@ enum Commands {
         /// Creator address (base58). Pays rent, signs, and is a PDA seed.
         #[arg(long)]
         creator: String,
-        /// Authorization policy: ed25519-only, falcon-only, or hybrid-and.
-        #[arg(long, default_value = "hybrid-and")]
+        /// Authorization policy (see `--help` for names).
+        #[arg(long, default_value = "hybrid-and", help = POLICY_HELP)]
         policy: String,
         /// Also write the instruction as JSON here.
         #[arg(long)]
         out: Option<PathBuf>,
+        #[command(flatten)]
+        rpc: RpcArgs,
     },
-    /// Build a HybridAnd-authorized SOL transfer (Milestone 7).
-    ///
-    /// Signs offline and prints the Ed25519 + Execute instruction pair.
-    /// Does not broadcast.
+    /// Build (and optionally broadcast) a HybridAnd SOL transfer.
     Transfer {
         /// Destination address (base58).
         #[arg(long)]
@@ -85,16 +110,180 @@ enum Commands {
         /// HybridAccount PDA address (base58).
         #[arg(long)]
         account: String,
-        /// Current on-chain account nonce (must match when submitting).
+        /// Current on-chain nonce. Omit with `--broadcast` to read from chain.
         #[arg(long)]
-        nonce: u64,
+        nonce: Option<u64>,
         /// Last slot at which the intent is valid (inclusive).
         #[arg(long)]
         expiry_slot: u64,
         /// Also write the artifact as JSON here.
         #[arg(long)]
         out: Option<PathBuf>,
+        #[command(flatten)]
+        rpc: RpcArgs,
     },
+    /// Change the HybridAccount authorization policy (Milestone 10).
+    ChangePolicy {
+        #[arg(long, default_value = "keys")]
+        keys: PathBuf,
+        #[arg(long)]
+        program_id: String,
+        #[arg(long)]
+        account: String,
+        #[arg(long, help = POLICY_HELP)]
+        policy: String,
+        /// Threshold lamports for falcon-above-threshold (ignored otherwise).
+        #[arg(long, default_value_t = 0)]
+        threshold: u64,
+        #[arg(long)]
+        nonce: Option<u64>,
+        #[arg(long)]
+        expiry_slot: u64,
+        #[arg(long)]
+        out: Option<PathBuf>,
+        #[command(flatten)]
+        rpc: RpcArgs,
+    },
+    /// Rotate the Ed25519 owner under the current policy (Milestone 9).
+    RotateEd25519 {
+        #[arg(long, default_value = "keys")]
+        keys: PathBuf,
+        #[arg(long)]
+        program_id: String,
+        #[arg(long)]
+        account: String,
+        /// New Ed25519 owner pubkey (base58).
+        #[arg(long)]
+        new_owner: String,
+        #[arg(long)]
+        nonce: Option<u64>,
+        #[arg(long)]
+        expiry_slot: u64,
+        #[arg(long)]
+        out: Option<PathBuf>,
+        #[command(flatten)]
+        rpc: RpcArgs,
+    },
+    /// RecoverAccount lifecycle (Milestone 12).
+    Recover {
+        #[command(subcommand)]
+        op: RecoverCmd,
+    },
+    /// Build (and optionally broadcast) a TransferSpl (Milestone 11/14).
+    TransferSpl {
+        #[arg(long, default_value = "keys")]
+        keys: PathBuf,
+        #[arg(long)]
+        program_id: String,
+        #[arg(long)]
+        account: String,
+        /// Creator pubkey (PDA seed; must match Initialize).
+        #[arg(long)]
+        creator: String,
+        #[arg(long)]
+        source: String,
+        #[arg(long)]
+        mint: String,
+        #[arg(long)]
+        destination: String,
+        #[arg(long)]
+        amount: u64,
+        #[arg(long)]
+        nonce: Option<u64>,
+        #[arg(long)]
+        expiry_slot: u64,
+        /// Use Token-2022 program id instead of classic SPL Token.
+        #[arg(long, default_value_t = false)]
+        token_2022: bool,
+        #[arg(long)]
+        out: Option<PathBuf>,
+        #[command(flatten)]
+        rpc: RpcArgs,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum RecoverCmd {
+    /// Opt in to Falcon-only Ed25519 recovery.
+    Enable {
+        #[arg(long, default_value = "keys")]
+        keys: PathBuf,
+        #[arg(long)]
+        program_id: String,
+        #[arg(long)]
+        account: String,
+        #[arg(long)]
+        nonce: Option<u64>,
+        #[arg(long)]
+        expiry_slot: u64,
+        #[arg(long)]
+        out: Option<PathBuf>,
+        #[command(flatten)]
+        rpc: RpcArgs,
+    },
+    /// Opt out of Falcon-only Ed25519 recovery.
+    Disable {
+        #[arg(long, default_value = "keys")]
+        keys: PathBuf,
+        #[arg(long)]
+        program_id: String,
+        #[arg(long)]
+        account: String,
+        #[arg(long)]
+        nonce: Option<u64>,
+        #[arg(long)]
+        expiry_slot: u64,
+        #[arg(long)]
+        out: Option<PathBuf>,
+        #[command(flatten)]
+        rpc: RpcArgs,
+    },
+    /// Rotate Ed25519 owner with Falcon alone (requires recovery enabled).
+    RotateEd25519 {
+        #[arg(long, default_value = "keys")]
+        keys: PathBuf,
+        #[arg(long)]
+        program_id: String,
+        #[arg(long)]
+        account: String,
+        #[arg(long)]
+        new_owner: String,
+        #[arg(long)]
+        nonce: Option<u64>,
+        #[arg(long)]
+        expiry_slot: u64,
+        #[arg(long)]
+        out: Option<PathBuf>,
+        #[command(flatten)]
+        rpc: RpcArgs,
+    },
+}
+
+fn parse_policy(policy: &str) -> Result<AuthorizationPolicy, ExitCode> {
+    AuthorizationPolicy::from_name(policy).ok_or_else(|| {
+        eprintln!("error: unknown policy {policy:?}; expected one of {POLICY_HELP}");
+        ExitCode::FAILURE
+    })
+}
+
+fn lifecycle<'a>(
+    keys: &'a PathBuf,
+    program_id: &'a str,
+    account: &'a str,
+    nonce: Option<u64>,
+    expiry_slot: u64,
+    out: Option<&'a PathBuf>,
+    rpc: &RpcArgs,
+) -> submit::LifecycleParams<'a> {
+    submit::LifecycleParams {
+        keys_dir: keys,
+        program_id,
+        hybrid_account: account,
+        nonce,
+        expiry_slot,
+        broadcast: rpc.opts(),
+        out: out.map(|p| p.as_path()),
+    }
 }
 
 fn main() -> ExitCode {
@@ -110,22 +299,18 @@ fn main() -> ExitCode {
             creator,
             policy,
             out,
-        } => match AuthorizationPolicy::from_name(&policy) {
-            Some(policy) => submit::init(
+            rpc,
+        } => match parse_policy(&policy) {
+            Ok(policy) => submit::init(
                 &keys,
                 account_index,
                 &program_id,
                 &creator,
                 policy,
                 out.as_deref(),
+                &rpc.opts(),
             ),
-            None => {
-                eprintln!(
-                    "error: unknown policy {policy:?}; expected one of \
-                     ed25519-only, falcon-only, hybrid-and"
-                );
-                return ExitCode::FAILURE;
-            }
+            Err(code) => return code,
         },
         Commands::Transfer {
             to,
@@ -136,6 +321,7 @@ fn main() -> ExitCode {
             nonce,
             expiry_slot,
             out,
+            rpc,
         } => submit::transfer(submit::TransferParams {
             keys_dir: &keys,
             program_id: &program_id,
@@ -144,6 +330,140 @@ fn main() -> ExitCode {
             lamports,
             nonce,
             expiry_slot,
+            out: out.as_deref(),
+            broadcast: rpc.opts(),
+        }),
+        Commands::ChangePolicy {
+            keys,
+            program_id,
+            account,
+            policy,
+            threshold,
+            nonce,
+            expiry_slot,
+            out,
+            rpc,
+        } => match parse_policy(&policy) {
+            Ok(policy) => submit::change_policy(
+                lifecycle(
+                    &keys,
+                    &program_id,
+                    &account,
+                    nonce,
+                    expiry_slot,
+                    out.as_ref(),
+                    &rpc,
+                ),
+                policy,
+                threshold,
+            ),
+            Err(code) => return code,
+        },
+        Commands::RotateEd25519 {
+            keys,
+            program_id,
+            account,
+            new_owner,
+            nonce,
+            expiry_slot,
+            out,
+            rpc,
+        } => submit::rotate_ed25519(
+            lifecycle(
+                &keys,
+                &program_id,
+                &account,
+                nonce,
+                expiry_slot,
+                out.as_ref(),
+                &rpc,
+            ),
+            &new_owner,
+        ),
+        Commands::Recover { op } => match op {
+            RecoverCmd::Enable {
+                keys,
+                program_id,
+                account,
+                nonce,
+                expiry_slot,
+                out,
+                rpc,
+            } => submit::recover_enable(lifecycle(
+                &keys,
+                &program_id,
+                &account,
+                nonce,
+                expiry_slot,
+                out.as_ref(),
+                &rpc,
+            )),
+            RecoverCmd::Disable {
+                keys,
+                program_id,
+                account,
+                nonce,
+                expiry_slot,
+                out,
+                rpc,
+            } => submit::recover_disable(lifecycle(
+                &keys,
+                &program_id,
+                &account,
+                nonce,
+                expiry_slot,
+                out.as_ref(),
+                &rpc,
+            )),
+            RecoverCmd::RotateEd25519 {
+                keys,
+                program_id,
+                account,
+                new_owner,
+                nonce,
+                expiry_slot,
+                out,
+                rpc,
+            } => submit::recover_rotate_ed25519(
+                lifecycle(
+                    &keys,
+                    &program_id,
+                    &account,
+                    nonce,
+                    expiry_slot,
+                    out.as_ref(),
+                    &rpc,
+                ),
+                &new_owner,
+            ),
+        },
+        Commands::TransferSpl {
+            keys,
+            program_id,
+            account,
+            creator,
+            source,
+            mint,
+            destination,
+            amount,
+            nonce,
+            expiry_slot,
+            token_2022,
+            out,
+            rpc,
+        } => submit::transfer_spl(submit::TransferSplParams {
+            keys_dir: &keys,
+            program_id: &program_id,
+            hybrid_account: &account,
+            creator: &creator,
+            source: &source,
+            mint: &mint,
+            destination: &destination,
+            amount,
+            nonce,
+            expiry_slot,
+            token_2022,
+            broadcast: rpc.opts(),
             out: out.as_deref(),
         }),
     };

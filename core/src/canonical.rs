@@ -111,6 +111,23 @@ pub fn canonical_preimage(intent: &AuthorizationIntent) -> [u8; CANONICAL_PREIMA
             out[body + 8..body + 16].copy_from_slice(&threshold.to_le_bytes());
             // Remaining 24 bytes stay zero (reserved).
         }
+        Action::RecoverAccount { op, new_ed25519 } => {
+            let body = offsets::ACTION_BODY;
+            out[body] = op.as_u8();
+            // bytes [1..8] stay zero (pad)
+            out[body + 8..body + 40].copy_from_slice(&new_ed25519);
+        }
+        Action::SetRecoveryConfig {
+            guardian_ed25519,
+            delay_slots,
+        } => {
+            let body = offsets::ACTION_BODY;
+            out[body..body + 32].copy_from_slice(&guardian_ed25519);
+            out[body + 32..body + 40].copy_from_slice(&delay_slots.to_le_bytes());
+        }
+        Action::CancelSocialRecovery => {
+            // body remains zero
+        }
     }
 
     out

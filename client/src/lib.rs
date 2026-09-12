@@ -13,6 +13,7 @@ pub mod intent;
 pub mod keygen;
 pub mod keys;
 pub mod onchain;
+pub mod rpc;
 pub mod sign;
 pub mod submit;
 

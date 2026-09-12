@@ -96,14 +96,15 @@ the vault address. See architecture doc for the rejected keys-as-seeds design.
 
 | Mode | Status | Rule |
 |------|--------|------|
-| `Ed25519Only` | Planned (early) | Ed25519 |
-| `FalconOnly` | Planned (early) | Falcon-512 |
-| `HybridAnd` | Primary research mode | Ed25519 **AND** Falcon (no fallback) |
-| `HybridOr` | Later | either scheme |
-| `FalconForPrivileged` | Later | Falcon for privileged ops |
-| `FalconAboveThreshold` | Later | Falcon above value threshold |
+| `Ed25519Only` | **Done** | Ed25519 |
+| `FalconOnly` | **Done** | Falcon-512 |
+| `HybridAnd` | **Done** (primary) | Ed25519 **AND** Falcon (no fallback) |
+| `HybridOr` | **Done** | either scheme |
+| `FalconForPrivileged` | **Done** | Falcon for privileged ops |
+| `FalconAboveThreshold` | **Done** | Falcon above value threshold |
 
-Also planned: Falcon required for key rotation / recovery (policy composition).
+Key rotation, policy changes, and recovery controls are privileged under
+`FalconForPrivileged`. `ChangePolicy` uses the stricter-of signature lattice.
 
 ## Threat model (summary)
 
@@ -120,18 +121,8 @@ tight legacy transaction size budgets.
 
 ## Project status
 
-**Milestone 2 — complete (Falcon-512 verification runs under Solana SBF).**
-
-A PQClean-produced Falcon-512 signature verifies **directly** under the
-on-chain verifier `solana-falcon512`, with right-zero-padding to 666 bytes as
-the only adaptation ([`docs/falcon-interop.md`](docs/falcon-interop.md)) — and
-that verification now executes inside the SBF virtual machine against the
-compiled `.so`, at 172.6k–193.4k CU for a 32-byte digest. The on-chain
-`sol_sha256` digest reproduces the client's `sha2` digest bit-for-bit.
-Full findings: [`docs/milestone-2.md`](docs/milestone-2.md).
-
-There is still **no vault**: no PDA, no authorization policy, and no lamport
-movement. The account instructions return `Unimplemented`.
+**Milestones 0–16 complete** (research path plus out-of-scope finish items).
+See [`docs/STATUS.md`](docs/STATUS.md).
 
 | Milestone | Description | Status |
 |----------:|-------------|--------|
@@ -147,6 +138,11 @@ movement. The account instructions return `Unimplemented`.
 | 9 | Key rotation | **Done** |
 | 10 | Richer policies | **Done** |
 | 11 | SPL Token | **Done** |
+| 12 | RecoverAccount (Falcon-only Ed recover) | **Done** |
+| 13 | CLI RPC broadcast | **Done** |
+| 14 | Token-2022 TransferSpl (base; hooks refused) | **Done** |
+| 15 | Social recovery (guardian + timelock) | **Done** |
+| 16 | Docs / CLI / localnet demo polish | **Done** |
 
 ## Repository layout
 
@@ -301,7 +297,7 @@ message telling you to.
 ## Test instructions
 
 ```bash
-# Everything (needs the .so built first; ~179 tests as of Milestone 11)
+# Everything (needs the .so built first; ~184 tests as of Milestone 12)
 cargo test --workspace
 
 # Shared types, layout, canonical encoding
@@ -334,6 +330,15 @@ cargo test -p dualkey-client --release --test sbf_policy -- --nocapture
 # SPL Token transfer (Milestone 11)
 cargo test -p dualkey-client --release --test sbf_spl -- --nocapture
 
+# RecoverAccount (Milestone 12)
+cargo test -p dualkey-client --release --test sbf_recover -- --nocapture
+
+# Token-2022 + hook refusal (Milestone 14; included in sbf_spl)
+cargo test -p dualkey-client --release --test sbf_spl -- --nocapture
+
+# Social recovery (Milestone 15)
+cargo test -p dualkey-client --release --test sbf_social_recovery -- --nocapture
+
 # Signature length distribution soak (10,000 signatures)
 cargo test -p dualkey-client --release --test falcon_interop -- --ignored --nocapture
 
@@ -359,17 +364,23 @@ Test groups (all under `client/tests/`):
 | `sbf_bench.rs` | SBF (M8) | Policy CU matrix (9 samples); legacy tx size ≤ 1232 without ALT |
 | `sbf_rotate.rs` | SBF (M9) | RotateEd25519 / RotateFalcon + PoP; old key cannot authorize after rotate |
 | `sbf_policy.rs` | SBF (M10) | HybridOr / FalconForPrivileged / FalconAboveThreshold; ChangePolicy stricter-of |
-| `sbf_spl.rs` | SBF (M11) | TransferSpl via PDA-signed SPL Token CPI; wrong dest/creator/balance |
+| `sbf_spl.rs` | SBF (M11/M14) | TransferSpl classic + Token-2022 base; transfer-hook refusal |
+| `sbf_recover.rs` | SBF (M12) | Enable/disable recovery; Falcon-only Ed25519 recover rotate |
+| `sbf_social_recovery.rs` | SBF (M15) | Guardian + timelock set/initiate/finalize/cancel |
 
 The SBF tests live in `client/tests/` rather than `program/tests/` on purpose:
 it keeps every Falcon **signer** out of the program package's dependency graph,
 even as a dev-dependency, and makes each test a genuine cross-layer check —
 the client signs with PQClean, the program verifies with `solana-falcon512`.
 
-On-chain attack/integration coverage so far: HybridAnd success/failure,
-replay, expiry, TransferSol / rent floor, CU/size benches, key rotation with
-Falcon PoP, richer policies, authenticated `ChangePolicy`, and classic SPL
-`TransferSpl`. `RecoverAccount` remains reserved.
+On-chain coverage: HybridAnd, replay/expiry, TransferSol/SPL (classic +
+Token-2022 base), CU/size benches, key rotation + PoP, richer policies,
+ChangePolicy, RecoverAccount, social recovery, and CLI RPC broadcast. Still
+excluded: full transfer-hook resolution, multi-guardian thresholds, formal
+audit / “quantum proof” claims.
+
+Localnet demo sketch: [`scripts/demo-localnet.sh`](scripts/demo-localnet.sh)
+(requires `solana-test-validator`, a deployed program, and a funded payer).
 
 ## Benchmarks
 
@@ -441,6 +452,7 @@ Research questions guiding the work:
 
 ## Documentation
 
+- [`docs/STATUS.md`](docs/STATUS.md) — project completion summary  
 - [`docs/architecture.md`](docs/architecture.md) — layers, PDA, layout, deps  
 - [`docs/canonical-intent.md`](docs/canonical-intent.md) — signing encoding  
 - [`docs/falcon-interop.md`](docs/falcon-interop.md) — PQClean ↔ on-chain Falcon encoding findings  
@@ -451,6 +463,7 @@ Research questions guiding the work:
 - [`docs/milestone-9.md`](docs/milestone-9.md) — key rotation + Falcon PoP  
 - [`docs/milestone-10.md`](docs/milestone-10.md) — richer policies + ChangePolicy  
 - [`docs/milestone-11.md`](docs/milestone-11.md) — SPL Token transfer  
+- [`docs/milestone-12.md`](docs/milestone-12.md) — RecoverAccount / project completion  
 - [`docs/threat-model.md`](docs/threat-model.md) — adversaries and invariants  
 - [`docs/benchmark-plan.md`](docs/benchmark-plan.md) — measurement plan  
 
