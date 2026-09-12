@@ -13,8 +13,8 @@ not only print offline artifacts.
 - Wired flows: `init`, `transfer`, `transfer-spl`, `change-policy`,
   `rotate-ed25519`, `recover {enable,disable,rotate-ed25519}` (and later
   `rotate-falcon` / `social …` under the same flags).
-- When `--nonce` is omitted and `--broadcast --rpc-url` is set, the CLI reads
-  the HybridAccount nonce from chain.
+- When `--nonce` is omitted and `--broadcast --rpc-url --payer` is set, the CLI
+  reads the HybridAccount nonce from chain.
 - Legacy transaction assembly for HybridAnd TransferSol (unit-tested without
   RPC in `client/src/rpc.rs`). Oversized Falcon rotate paths may still need
   ALT/v0 manually.

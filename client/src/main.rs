@@ -200,7 +200,10 @@ enum Commands {
         #[command(flatten)]
         rpc: RpcArgs,
     },
-    /// Rotate the Falcon-512 public key (Milestone 9; requires PoP under new key).
+    /// Rotate the Falcon-512 public key (Milestone 9; PoP under new key).
+    ///
+    /// Offline / `--out` only: ~2279-byte ix cannot fit legacy `--broadcast`
+    /// (v0 + ALT submission is out of scope).
     RotateFalcon {
         #[arg(long, default_value = "keys")]
         keys: PathBuf,
@@ -221,6 +224,10 @@ enum Commands {
         rpc: RpcArgs,
     },
     /// Social recovery (guardian + timelock, Milestone 15).
+    ///
+    /// Prerequisite: `dualkey recover enable`, then `social set-config`, then
+    /// initiate / finalize / cancel. Initiate/finalize/cancel require
+    /// `FLAG_RECOVERY_ENABLED` on-chain.
     Social {
         #[command(subcommand)]
         op: SocialCmd,
@@ -229,7 +236,7 @@ enum Commands {
 
 #[derive(Subcommand, Debug)]
 enum SocialCmd {
-    /// Set / replace guardian Ed25519 + delay_slots.
+    /// Set / replace guardian Ed25519 + delay_slots (after `recover enable`).
     SetConfig {
         #[arg(long, default_value = "keys")]
         keys: PathBuf,
@@ -251,7 +258,7 @@ enum SocialCmd {
         #[command(flatten)]
         rpc: RpcArgs,
     },
-    /// Guardian proposes a new Ed25519 owner (signs social-recover digest).
+    /// Guardian proposes a new Ed25519 owner (requires recovery enabled + config).
     Initiate {
         #[arg(long)]
         program_id: String,
@@ -269,7 +276,7 @@ enum SocialCmd {
         #[command(flatten)]
         rpc: RpcArgs,
     },
-    /// Permissionless finalize after the slot delay.
+    /// Permissionless finalize after the slot delay (requires recovery enabled).
     Finalize {
         #[arg(long)]
         program_id: String,
@@ -280,7 +287,7 @@ enum SocialCmd {
         #[command(flatten)]
         rpc: RpcArgs,
     },
-    /// DualKey owner cancels a pending social recovery.
+    /// DualKey owner cancels a pending social recovery (requires recovery enabled).
     Cancel {
         #[arg(long, default_value = "keys")]
         keys: PathBuf,

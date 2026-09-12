@@ -467,14 +467,28 @@ pub fn rotate_ed25519(params: LifecycleParams<'_>, new_owner: &str) -> Result<()
 }
 
 /// Rotate the Falcon public key under the current policy (with PoP).
+///
+/// Offline artifact / `--out` only: instruction data is ~2279 bytes and cannot
+/// fit a legacy `--broadcast` transaction (v0 + ALT is out of scope).
 pub fn rotate_falcon(params: LifecycleParams<'_>, new_falcon_keys: &Path) -> Result<()> {
+    if params.broadcast.broadcast {
+        return Err(ClientError::IntentFormat {
+            path: "broadcast".into(),
+            reason: "RotateFalconKey instruction data is ~2279 bytes and cannot fit a \
+                     legacy transaction; omit --broadcast and use --out (v0 + ALT \
+                     submission is out of scope)"
+                .into(),
+        });
+    }
+
     let program_id = parse_pubkey("program_id", params.program_id)?;
     let hybrid_account = parse_pubkey("account", params.hybrid_account)?;
     let paths = KeyPaths::new(params.keys_dir);
     let ed = Ed25519Keypair::load(&paths)?;
     let falcon = FalconKeypair::load(&paths)?;
     let new_falcon = FalconKeypair::load(&KeyPaths::new(new_falcon_keys))?;
-    let new_public = PublicKeys::load(&KeyPaths::new(new_falcon_keys))?;
+    let new_wire = new_falcon.public_bytes();
+    let new_pubkey_hash = crate::keys::sha256(new_wire);
     let nonce = resolve_nonce(&hybrid_account, params.nonce, &params.broadcast)?;
 
     let intent = onchain::signing_intent(
@@ -482,9 +496,7 @@ pub fn rotate_falcon(params: LifecycleParams<'_>, new_falcon_keys: &Path) -> Res
         &hybrid_account,
         nonce,
         params.expiry_slot,
-        Action::RotateFalconKey {
-            new_pubkey_hash: new_public.falcon_public_key_hash(),
-        },
+        Action::RotateFalconKey { new_pubkey_hash },
     );
     let digest = canonical_digest(&intent);
     let ed_sig = ed.signing_key().sign(&digest).to_bytes();
@@ -496,42 +508,22 @@ pub fn rotate_falcon(params: LifecycleParams<'_>, new_falcon_keys: &Path) -> Res
         &hybrid_account,
         &intent,
         auth_wire.as_wire_bytes(),
-        new_public.falcon_wire(),
+        new_wire,
         pop_wire.as_wire_bytes(),
     )?;
 
-    let mut signature = None;
-    if params.broadcast.broadcast {
-        let (url, payer_path) = params.broadcast.require_for_broadcast()?;
-        let rpc = Rpc::new(url);
-        let payer = rpc::load_payer(payer_path)?;
-        signature = Some(rpc::send_instructions(
-            &rpc,
-            &payer,
-            &[ed_ix.clone(), ix.clone()],
-        )?);
-    }
-
     println!("Digest:    {}", hex::encode(digest));
     println!("Nonce:     {nonce}");
-    println!(
-        "New Falcon SHA256: {}",
-        hex::encode(new_public.falcon_public_key_hash())
-    );
+    println!("New Falcon SHA256: {}", hex::encode(new_pubkey_hash));
     println!("Ix data:   {} bytes", ix.data.len());
-    if let Some(ref sig) = signature {
-        println!("Submitted: {sig}");
-    } else {
-        println!("Not submitted. Pass --broadcast --rpc-url --payer to submit.");
-    }
+    println!("Not submitted. RotateFalconKey needs v0 + ALT; use --out for the offline artifact.");
     if let Some(path) = params.out {
         let json = serde_json::json!({
             "digest": hex::encode(digest),
             "nonce": nonce,
-            "new_falcon_public_key_sha256": hex::encode(new_public.falcon_public_key_hash()),
+            "new_falcon_public_key_sha256": hex::encode(new_pubkey_hash),
             "ed25519_precompile_data_hex": hex::encode(&ed_ix.data),
             "instruction_data_hex": hex::encode(&ix.data),
-            "signature": signature,
         });
         crate::keys::write_with_mode(
             path,

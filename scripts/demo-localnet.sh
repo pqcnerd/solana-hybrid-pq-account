@@ -38,7 +38,7 @@ if [[ ! -f "$KEYS/ed25519.sk" ]]; then
 fi
 
 CREATOR="$(solana-keygen pubkey "$PAYER")"
-INIT_OUT="$(mktemp -t dualkey-init.XXXXXX.json)"
+INIT_OUT="$(mktemp "${TMPDIR:-/tmp}/dualkey-init.XXXXXX.json")"
 trap 'rm -f "$INIT_OUT"' EXIT
 
 echo "Creator / payer: $CREATOR"

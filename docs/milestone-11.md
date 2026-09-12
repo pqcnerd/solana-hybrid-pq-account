@@ -4,7 +4,8 @@
 the same hybrid authorization path as `TransferSol`, with the HybridAccount PDA
 signing the Token program CPI.
 
-**Status:** complete. 6 SBF SPL tests pass; fmt/clippy clean after verification.
+**Status:** complete. 8 SBF SPL tests pass (classic + Token-2022 base); fmt/clippy
+clean after verification.
 
 ---
 

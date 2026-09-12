@@ -129,7 +129,7 @@ chain-domain unit tests. 122 total.
 | Flipped wire expiry | `DigestMismatch` |
 | Unsupported action tag | `UnsupportedAction` |
 | Bad framing, missing account, wrong owner, bad version | exact error codes |
-| `Execute` still unimplemented | `execute_remains_unimplemented` |
+| `Execute` discriminator is 1 | `execute_discriminator_is_one` |
 
 ---
 

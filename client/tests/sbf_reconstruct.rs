@@ -2,9 +2,9 @@
 //!
 //! Proves the program rebuilds the same canonical digest the client signs, using
 //! only trusted context (program id, account address, stored nonce, compile-time
-//! chain domain) plus the 49-byte wire fragment. Authorization is not tested
-//! here — authorization lives in `Execute` and later instructions (tested in
-//! `sbf_hybrid.rs` and friends).
+//! chain domain) plus the 49-byte wire fragment. Authorization and transfer
+//! coverage live in `sbf_hybrid.rs` and friends — this harness only locks
+//! reconstruction and the Execute discriminator.
 
 use dualkey_client::onchain;
 use dualkey_core::{
@@ -323,11 +323,9 @@ fn unsupported_account_version_is_rejected() {
     );
 }
 
-/// `Execute` is implemented in Milestone 5; reconstruction harness still works.
+/// Discriminator lock: `Execute` remains instruction tag 1.
 #[test]
-fn execute_remains_authorization_only_until_transfer_milestone() {
-    // Kept as a documentation anchor: M5 authorizes, M7 transfers.
-    // Behavioural coverage lives in `sbf_hybrid.rs`.
+fn execute_discriminator_is_one() {
     assert_eq!(DualKeyInstruction::Execute.as_u8(), 1);
 }
 
