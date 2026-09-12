@@ -19,6 +19,7 @@ pub enum ActionSpec {
     TransferSol { recipient: String, lamports: u64 },
     RotateEd25519Key { new_pubkey: String },
     RotateFalconKey { new_pubkey_hash: String },
+    ChangePolicy { new_policy: u8, threshold: u64 },
 }
 
 /// JSON representation of an [`AuthorizationIntent`].
@@ -63,6 +64,13 @@ impl IntentSpec {
             ActionSpec::RotateFalconKey { new_pubkey_hash } => Action::RotateFalconKey {
                 new_pubkey_hash: hex32("action.new_pubkey_hash", new_pubkey_hash)?,
             },
+            ActionSpec::ChangePolicy {
+                new_policy,
+                threshold,
+            } => Action::ChangePolicy {
+                new_policy: *new_policy,
+                threshold: *threshold,
+            },
         };
 
         Ok(AuthorizationIntent {
@@ -91,6 +99,13 @@ impl IntentSpec {
             },
             Action::RotateFalconKey { new_pubkey_hash } => ActionSpec::RotateFalconKey {
                 new_pubkey_hash: hex::encode(new_pubkey_hash),
+            },
+            Action::ChangePolicy {
+                new_policy,
+                threshold,
+            } => ActionSpec::ChangePolicy {
+                new_policy,
+                threshold,
             },
         };
         Self {

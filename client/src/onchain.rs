@@ -264,6 +264,9 @@ pub const ROTATE_ED25519_DISCRIMINATOR: u8 = 2;
 /// Discriminator for `RotateFalconKey`.
 pub const ROTATE_FALCON_DISCRIMINATOR: u8 = 3;
 
+/// Discriminator for `ChangePolicy`.
+pub const CHANGE_POLICY_DISCRIMINATOR: u8 = 4;
+
 /// Full `RotateFalconKey` instruction data length.
 pub const ROTATE_FALCON_DATA_LEN: usize = 1
     + EXECUTE_INTENT_WIRE_LEN
@@ -356,6 +359,45 @@ pub fn rotate_falcon_instruction(
     data.extend_from_slice(new_wire_pubkey);
     data.extend_from_slice(falcon_pop_sig);
     debug_assert_eq!(data.len(), ROTATE_FALCON_DATA_LEN);
+    Ok(Instruction {
+        program_id: *program_id,
+        accounts: vec![
+            AccountMeta::new(*hybrid_account, false),
+            AccountMeta::new_readonly(instructions_sysvar_id(), false),
+        ],
+        data,
+    })
+}
+
+/// Build `ChangePolicy` (discriminator 4). Payload shape matches Execute.
+///
+/// Authorization uses the stricter of current and target policy requirements.
+pub fn change_policy_instruction(
+    program_id: &Pubkey,
+    hybrid_account: &Pubkey,
+    intent: &AuthorizationIntent,
+    falcon_sig: &[u8],
+) -> Result<Instruction> {
+    match intent.action {
+        dualkey_core::Action::ChangePolicy { .. } => {}
+        _ => {
+            return Err(ClientError::IntentFormat {
+                path: "change_policy".into(),
+                reason: "intent action must be ChangePolicy".into(),
+            });
+        }
+    }
+    let mut data = Vec::with_capacity(EXECUTE_DATA_LEN);
+    data.push(CHANGE_POLICY_DISCRIMINATOR);
+    data.extend_from_slice(&encode_execute_intent_wire(intent));
+    if falcon_sig.len() != FALCON_SIGNATURE_LEN {
+        return Err(ClientError::KeyFileLength {
+            path: "falcon signature".to_string(),
+            expected: FALCON_SIGNATURE_LEN,
+            actual: falcon_sig.len(),
+        });
+    }
+    data.extend_from_slice(falcon_sig);
     Ok(Instruction {
         program_id: *program_id,
         accounts: vec![

@@ -95,4 +95,5 @@ cargo clippy --workspace --all-targets
 cargo test --workspace
 ```
 
-Milestone 9 is complete. Milestone 10 (richer policies) has not been started.
+Milestone 9 is complete. Milestone 10 (richer policies) is documented in
+[`milestone-10.md`](milestone-10.md).

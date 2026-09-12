@@ -13,9 +13,9 @@ pub const ACTION_TAG_TRANSFER_SPL: u8 = 2;
 pub const ACTION_TAG_ROTATE_ED25519: u8 = 3;
 /// Action discriminator for `RotateFalconKey` (Milestone 9).
 pub const ACTION_TAG_ROTATE_FALCON: u8 = 4;
-/// Action discriminator for `ChangePolicy` (Milestone 10 — reserved).
+/// Action discriminator for `ChangePolicy` (Milestone 10).
 pub const ACTION_TAG_CHANGE_POLICY: u8 = 5;
-/// Action discriminator for `RecoverAccount` (Milestone 10 — reserved).
+/// Action discriminator for `RecoverAccount` (reserved; not yet wired).
 pub const ACTION_TAG_RECOVER_ACCOUNT: u8 = 6;
 
 /// Authorized action encoded inside an intent.
@@ -47,6 +47,21 @@ pub enum Action {
         /// SHA-256 of the new 897-byte Falcon wire public key.
         new_pubkey_hash: [u8; 32],
     },
+    /// Replace the authorization policy (Milestone 10).
+    ///
+    /// Authorized under the **stricter** of the current and target policies'
+    /// signature requirements for this action, so a stolen Ed25519 key alone
+    /// cannot disable Falcon on a HybridAnd account.
+    ///
+    /// Wire body: `new_policy[1] ‖ pad[7] ‖ threshold_u64_le[8] ‖ reserved[24]`.
+    /// `threshold` is stored when the target is [`crate::AuthorizationPolicy::FalconAboveThreshold`];
+    /// otherwise it is ignored and the threshold flag is cleared.
+    ChangePolicy {
+        /// Target [`crate::AuthorizationPolicy`] as a `u8`.
+        new_policy: u8,
+        /// Lamport threshold for `FalconAboveThreshold` (meaningful only then).
+        threshold: u64,
+    },
 }
 
 impl Action {
@@ -56,7 +71,20 @@ impl Action {
             Self::TransferSol { .. } => ACTION_TAG_TRANSFER_SOL,
             Self::RotateEd25519Key { .. } => ACTION_TAG_ROTATE_ED25519,
             Self::RotateFalconKey { .. } => ACTION_TAG_ROTATE_FALCON,
+            Self::ChangePolicy { .. } => ACTION_TAG_CHANGE_POLICY,
         }
+    }
+
+    /// Whether this action is "privileged" for [`crate::AuthorizationPolicy::FalconForPrivileged`].
+    ///
+    /// Transfers are normal; key rotation and policy changes are privileged.
+    pub const fn is_privileged(self) -> bool {
+        matches!(
+            self,
+            Self::RotateEd25519Key { .. }
+                | Self::RotateFalconKey { .. }
+                | Self::ChangePolicy { .. }
+        )
     }
 }
 

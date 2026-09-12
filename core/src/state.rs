@@ -180,6 +180,21 @@ impl HybridAccount<'_> {
     }
 
     /// Read `falcon_public_key_hash` without requiring mutability.
+    /// Read `falcon_required_above` when `FLAG_FALCON_THRESHOLD_SET` is set.
+    pub fn falcon_required_above_from_slice(data: &[u8]) -> Result<Option<u64>, DualKeyError> {
+        if data.len() != ACCOUNT_DATA_LEN {
+            return Err(DualKeyError::InvalidAccountData);
+        }
+        if data[offsets::FLAGS] & FLAG_FALCON_THRESHOLD_SET == 0 {
+            return Ok(None);
+        }
+        let mut buf = [0u8; 8];
+        buf.copy_from_slice(
+            &data[offsets::FALCON_REQUIRED_ABOVE..offsets::FALCON_REQUIRED_ABOVE + 8],
+        );
+        Ok(Some(u64::from_le_bytes(buf)))
+    }
+
     pub fn falcon_public_key_hash_from_slice(data: &[u8]) -> Result<[u8; 32], DualKeyError> {
         if data.len() != ACCOUNT_DATA_LEN {
             return Err(DualKeyError::InvalidAccountData);

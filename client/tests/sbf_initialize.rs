@@ -446,22 +446,20 @@ fn already_initialized_account_is_rejected() {
     );
 }
 
-/// Declared-but-unimplemented policies must be refused, not stored. Storing one
-/// would create an account whose policy this program cannot evaluate.
+/// Milestone 10 richer policies are accepted at Initialize.
 #[test]
-fn unimplemented_policy_is_rejected() {
+fn richer_policies_are_accepted_at_initialize() {
     let mollusk = mollusk();
     let owner = owner();
     let (creator, creator_acct) = creator_account(10_000_000_000);
-    let (ix, pda, _bump) = init_ix(&creator, 0, &owner, AuthorizationPolicy::HybridAnd);
 
-    for policy_byte in [
-        AuthorizationPolicy::HybridOr.as_u8(),
-        AuthorizationPolicy::FalconForPrivileged.as_u8(),
-        AuthorizationPolicy::FalconAboveThreshold.as_u8(),
+    for policy in [
+        AuthorizationPolicy::HybridOr,
+        AuthorizationPolicy::FalconForPrivileged,
+        AuthorizationPolicy::FalconAboveThreshold,
     ] {
-        let mut ix = ix.clone();
-        ix.data[37] = policy_byte;
+        let index = policy.as_u8() as u32;
+        let (ix, pda, _bump) = init_ix(&creator, index, &owner, policy);
         mollusk.process_and_validate_instruction(
             &ix,
             &[
@@ -469,7 +467,7 @@ fn unimplemented_policy_is_rejected() {
                 empty_pda_account(pda),
                 mollusk_svm::program::keyed_account_for_system_program(),
             ],
-            &[custom(DualKeyError::PolicyNotImplemented)],
+            &[Check::success()],
         );
     }
 }

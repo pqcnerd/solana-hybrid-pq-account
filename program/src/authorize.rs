@@ -1,12 +1,16 @@
-//! Shared authorization for `Execute` and key-rotation instructions.
+//! Shared authorization for `Execute`, key-rotation, and `ChangePolicy`.
 //!
 //! Reconstructs the intent, checks expiry and nonce, verifies signatures under
-//! the account's current policy, and returns the next nonce. Callers bump the
-//! nonce and then perform their action; Solana atomicity reverts both on failure.
+//! the effective [`SignatureRequirement`], and returns the next nonce. Callers
+//! bump the nonce and then perform their action; Solana atomicity reverts both
+//! on failure.
+//!
+//! For `ChangePolicy`, the requirement is the **meet** (stricter) of the
+//! current and target policies' requirements for that action.
 
 use dualkey_core::{
-    AuthorizationPolicy, DualKeyError, ExecuteIntentWire, HybridAccount, DIGEST_LEN,
-    EXECUTE_INTENT_WIRE_LEN, FALCON_SIGNATURE_LEN,
+    Action, AuthorizationPolicy, DualKeyError, ExecuteIntentWire, HybridAccount,
+    SignatureRequirement, DIGEST_LEN, EXECUTE_INTENT_WIRE_LEN, FALCON_SIGNATURE_LEN,
 };
 use solana_account_info::AccountInfo;
 use solana_clock::Clock;
@@ -15,10 +19,10 @@ use solana_pubkey::Pubkey;
 
 use crate::auth::ed25519::verify_ed25519_precompile;
 use crate::auth::falcon::verify_falcon_prepared;
-use crate::auth::policy::{evaluate_policy, SignatureValidity};
+use crate::auth::policy::{evaluate_requirement, SignatureValidity};
 use crate::reconstruct::reconstruct_and_digest;
 
-/// Result of a successful authorization under the account's current policy.
+/// Result of a successful authorization under the effective signature requirement.
 pub struct Authorization {
     pub digest: [u8; DIGEST_LEN],
     pub policy: AuthorizationPolicy,
@@ -26,7 +30,7 @@ pub struct Authorization {
     pub next_nonce: u64,
 }
 
-/// Authorize `wire` + `falcon_sig` against `hybrid_account` under its stored policy.
+/// Authorize `wire` + `falcon_sig` against `hybrid_account`.
 ///
 /// Does **not** mutate the account. The caller must bump the nonce and apply
 /// the action after this returns.
@@ -55,6 +59,7 @@ pub fn authorize(
     let owner_ed25519 = HybridAccount::owner_ed25519_from_slice(&data)?;
     let prepared = *HybridAccount::prepared_falcon_public_key_from_slice(&data)?;
     let account_nonce = HybridAccount::nonce_from_slice(&data)?;
+    let threshold = HybridAccount::falcon_required_above_from_slice(&data)?;
     drop(data);
 
     if ctx.nonce != account_nonce {
@@ -65,43 +70,97 @@ pub fn authorize(
         .checked_add(1)
         .ok_or(DualKeyError::MathOverflow)?;
 
-    let sigs = match policy {
-        AuthorizationPolicy::Ed25519Only => {
-            verify_ed25519_precompile(instructions_sysvar, &owner_ed25519, &digest)?;
-            SignatureValidity {
-                ed25519_valid: true,
-                falcon_valid: false,
-            }
-        }
-        AuthorizationPolicy::FalconOnly => {
-            verify_falcon_prepared(prepared.as_slice(), &digest, falcon_sig)?;
-            SignatureValidity {
-                ed25519_valid: false,
-                falcon_valid: true,
-            }
-        }
-        AuthorizationPolicy::HybridAnd => {
-            verify_ed25519_precompile(instructions_sysvar, &owner_ed25519, &digest)?;
-            verify_falcon_prepared(prepared.as_slice(), &digest, falcon_sig)?;
-            SignatureValidity {
-                ed25519_valid: true,
-                falcon_valid: true,
-            }
-        }
-        AuthorizationPolicy::HybridOr
-        | AuthorizationPolicy::FalconForPrivileged
-        | AuthorizationPolicy::FalconAboveThreshold => {
-            return Err(DualKeyError::PolicyNotImplemented);
-        }
-    };
-
-    evaluate_policy(policy, sigs)?;
+    let req = effective_requirement(policy, threshold, &wire.action)?;
+    let sigs = collect_signatures(
+        req,
+        instructions_sysvar,
+        &owner_ed25519,
+        prepared.as_slice(),
+        &digest,
+        falcon_sig,
+    )?;
+    evaluate_requirement(req, sigs)?;
 
     Ok(Authorization {
         digest,
         policy,
         account_nonce,
         next_nonce,
+    })
+}
+
+/// Compute the signature requirement for this authorization attempt.
+///
+/// Ordinary actions use the account's current policy. `ChangePolicy` uses the
+/// stricter of current and target.
+fn effective_requirement(
+    current: AuthorizationPolicy,
+    current_threshold: Option<u64>,
+    action: &Action,
+) -> Result<SignatureRequirement, DualKeyError> {
+    let current_req = current.signature_requirement(action, current_threshold);
+
+    let Action::ChangePolicy {
+        new_policy,
+        threshold: new_threshold,
+    } = *action
+    else {
+        return Ok(current_req);
+    };
+
+    let target =
+        AuthorizationPolicy::from_u8(new_policy).ok_or(DualKeyError::InvalidAccountData)?;
+    if !target.is_implemented() {
+        return Err(DualKeyError::PolicyNotImplemented);
+    }
+
+    let target_threshold = if target == AuthorizationPolicy::FalconAboveThreshold {
+        Some(new_threshold)
+    } else {
+        None
+    };
+    let target_req = target.signature_requirement(action, target_threshold);
+    Ok(current_req.meet(target_req))
+}
+
+/// Verify the schemes demanded by `req` and return their validity bits.
+fn collect_signatures(
+    req: SignatureRequirement,
+    instructions_sysvar: &AccountInfo,
+    owner_ed25519: &[u8; 32],
+    prepared: &[u8],
+    digest: &[u8; DIGEST_LEN],
+    falcon_sig: &[u8],
+) -> Result<SignatureValidity, DualKeyError> {
+    let mut ed25519_valid = false;
+    let mut falcon_valid = false;
+
+    match req {
+        SignatureRequirement::Ed25519 | SignatureRequirement::Both => {
+            verify_ed25519_precompile(instructions_sysvar, owner_ed25519, digest)?;
+            ed25519_valid = true;
+        }
+        SignatureRequirement::Either => {
+            ed25519_valid =
+                verify_ed25519_precompile(instructions_sysvar, owner_ed25519, digest).is_ok();
+        }
+        SignatureRequirement::Falcon => {}
+    }
+
+    match req {
+        SignatureRequirement::Falcon | SignatureRequirement::Both => {
+            verify_falcon_prepared(prepared, digest, falcon_sig)?;
+            falcon_valid = true;
+        }
+        SignatureRequirement::Either => {
+            falcon_valid = verify_falcon_prepared(prepared, digest, falcon_sig).is_ok();
+        }
+        SignatureRequirement::Ed25519 => {}
+    }
+
+    Ok(SignatureValidity {
+        ed25519_valid,
+        falcon_valid,
     })
 }
 

@@ -495,10 +495,10 @@ fn garbage_prepared_key_fails_verification_without_panicking() {
     }
 }
 
-/// The instructions that would mutate policy must still refuse.
-/// Key rotation is implemented in Milestone 9 (`sbf_rotate`).
+/// `ChangePolicy` is implemented in Milestone 10 (`sbf_policy`).
+/// A bare discriminator without the 715-byte payload is malformed.
 #[test]
-fn policy_change_remains_unimplemented() {
+fn change_policy_requires_full_payload() {
     let mollusk = mollusk();
     mollusk.process_and_validate_instruction(
         &Instruction {
@@ -507,7 +507,7 @@ fn policy_change_remains_unimplemented() {
             data: vec![DualKeyInstruction::ChangePolicy.as_u8()],
         },
         &[],
-        &[custom(DualKeyError::Unimplemented)],
+        &[custom(DualKeyError::MalformedInstructionData)],
     );
 }
 

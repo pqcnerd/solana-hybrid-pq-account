@@ -197,14 +197,14 @@ Measured headroom: **67 bytes** without an ALT. Details:
 
 Declared in `dualkey_core::AuthorizationPolicy`:
 
-| Mode | Early milestones | Rule |
-|------|------------------|------|
-| `Ed25519Only` | yes | Ed25519 |
-| `FalconOnly` | yes | Falcon |
-| `HybridAnd` | yes (default) | Ed25519 **AND** Falcon — no silent fallback |
+| Mode | Status | Rule |
+|------|--------|------|
+| `Ed25519Only` | implemented | Ed25519 |
+| `FalconOnly` | implemented | Falcon |
+| `HybridAnd` | implemented (default) | Ed25519 **AND** Falcon — no silent fallback |
 | `HybridOr` | Milestone 10 | either |
-| `FalconForPrivileged` | Milestone 10 | Falcon for privileged ops |
-| `FalconAboveThreshold` | Milestone 10 | Falcon above lamport threshold |
+| `FalconForPrivileged` | Milestone 10 | Falcon for privileged ops; Ed25519 for TransferSol |
+| `FalconAboveThreshold` | Milestone 10 | Falcon when lamports > threshold |
 
 ## Authorization flow (target)
 

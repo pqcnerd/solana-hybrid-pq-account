@@ -25,10 +25,10 @@ pub use canonical::{
 pub use chain_domain::{CHAIN_DOMAIN_DEVNET, CHAIN_DOMAIN_LOCALNET, CHAIN_DOMAIN_MAINNET};
 pub use error::DualKeyError;
 pub use intent::{
-    Action, AuthorizationIntent, ACTION_TAG_ROTATE_ED25519, ACTION_TAG_ROTATE_FALCON,
-    ACTION_TAG_TRANSFER_SOL,
+    Action, AuthorizationIntent, ACTION_TAG_CHANGE_POLICY, ACTION_TAG_ROTATE_ED25519,
+    ACTION_TAG_ROTATE_FALCON, ACTION_TAG_TRANSFER_SOL,
 };
-pub use policy::AuthorizationPolicy;
+pub use policy::{AuthorizationPolicy, SignatureRequirement};
 pub use state::{
     pda_seeds, HybridAccount, ACCOUNT_DATA_LEN, ACCOUNT_INDEX_LEN, ACCOUNT_VERSION,
     FALCON_SIGNATURE_LEN, FALCON_WIRE_PUBKEY_LEN, FLAG_FALCON_THRESHOLD_SET, FLAG_RECOVERY_ENABLED,

@@ -301,7 +301,7 @@ message telling you to.
 ## Test instructions
 
 ```bash
-# Everything (160 tests as of Milestone 9; needs the .so built first)
+# Everything (needs the .so built first; ~173 tests as of Milestone 10)
 cargo test --workspace
 
 # Shared types, layout, canonical encoding
@@ -328,6 +328,9 @@ cargo test -p dualkey-client --release --test sbf_bench -- --nocapture
 # Key rotation (Milestone 9)
 cargo test -p dualkey-client --release --test sbf_rotate -- --nocapture
 
+# Richer policies + ChangePolicy (Milestone 10)
+cargo test -p dualkey-client --release --test sbf_policy -- --nocapture
+
 # Signature length distribution soak (10,000 signatures)
 cargo test -p dualkey-client --release --test falcon_interop -- --ignored --nocapture
 
@@ -352,6 +355,7 @@ Test groups (all under `client/tests/`):
 | `sbf_hybrid.rs` | SBF (M5–M7) | HybridAnd / policies; nonce/replay/expiry; TransferSol + rent floor |
 | `sbf_bench.rs` | SBF (M8) | Policy CU matrix (9 samples); legacy tx size ≤ 1232 without ALT |
 | `sbf_rotate.rs` | SBF (M9) | RotateEd25519 / RotateFalcon + PoP; old key cannot authorize after rotate |
+| `sbf_policy.rs` | SBF (M10) | HybridOr / FalconForPrivileged / FalconAboveThreshold; ChangePolicy stricter-of |
 
 The SBF tests live in `client/tests/` rather than `program/tests/` on purpose:
 it keeps every Falcon **signer** out of the program package's dependency graph,
@@ -359,8 +363,9 @@ even as a dev-dependency, and makes each test a genuine cross-layer check —
 the client signs with PQClean, the program verifies with `solana-falcon512`.
 
 On-chain attack/integration coverage so far: HybridAnd success/failure,
-replay, expiry, TransferSol / rent floor, CU/size benches, and key rotation
-with Falcon PoP. Still planned: richer policies (M10), SPL (M11).
+replay, expiry, TransferSol / rent floor, CU/size benches, key rotation with
+Falcon PoP, richer policies, and authenticated `ChangePolicy`. Still planned:
+SPL (M11).
 
 ## Benchmarks
 
@@ -440,6 +445,7 @@ Research questions guiding the work:
 - [`docs/milestone-7.md`](docs/milestone-7.md) — hybrid-authorized SOL transfer  
 - [`docs/milestone-8.md`](docs/milestone-8.md) — CU + legacy transaction size  
 - [`docs/milestone-9.md`](docs/milestone-9.md) — key rotation + Falcon PoP  
+- [`docs/milestone-10.md`](docs/milestone-10.md) — richer policies + ChangePolicy  
 - [`docs/threat-model.md`](docs/threat-model.md) — adversaries and invariants  
 - [`docs/benchmark-plan.md`](docs/benchmark-plan.md) — measurement plan  
 

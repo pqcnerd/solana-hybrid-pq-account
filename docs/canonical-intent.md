@@ -83,13 +83,22 @@ action_body = SHA256(new_falcon_wire_pubkey)[32] || 0u64
 The 897-byte wire public key and Falcon PoP signature travel in the
 `RotateFalconKey` instruction payload (not in the 40-byte action body).
 
+### Tag `5` — `ChangePolicy` (Milestone 10)
+
+```text
+action_body = new_policy[1] || pad[7] || threshold_u64_le[8] || reserved[24]
+```
+
+`threshold` is stored when the target policy is `FalconAboveThreshold`;
+otherwise the threshold flag is cleared. Authorization uses the **stricter** of
+the current and target policies' signature requirements for this action.
+
 Remaining action tags are reserved:
 
 | Tag | Action | Milestone |
 |----:|--------|----------:|
 | 2 | TransferSpl | 11 |
-| 5 | ChangePolicy | 10 |
-| 6 | RecoverAccount | 10 |
+| 6 | RecoverAccount | reserved |
 
 ## Shared preimage, separate hashers
 

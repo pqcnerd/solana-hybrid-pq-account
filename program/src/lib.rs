@@ -12,6 +12,7 @@
 //! Milestone 5–7 implement `Execute` authorization with expiry, nonce
 //! consumption, and `TransferSol`. Milestone 9 adds key rotation
 //! (`RotateEd25519Key`, `RotateFalconKey` with Falcon proof-of-possession).
+//! Milestone 10 adds richer policies and `ChangePolicy` (stricter-of auth).
 //!
 //! Falcon key generation and Falcon signing never happen here; this crate
 //! contains verification only, and `pqcrypto-falcon` is absent from its
@@ -24,6 +25,7 @@ use solana_pubkey::Pubkey;
 pub mod auth;
 pub mod authorize;
 pub mod chain_domain;
+pub mod change_policy;
 pub mod error;
 pub mod execute;
 pub mod hash;
