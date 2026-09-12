@@ -132,7 +132,7 @@ Fixed offsets; no `Vec`; no Borsh on the hot path.
 | 1 | 1 | `bump` |
 | 2 | 1 | `policy` |
 | 3 | 1 | `flags` (bit0 recovery, bit1 threshold set) |
-| 4 | 4 | reserved |
+| 4 | 4 | `account_index` (u32 LE; PDA seed) |
 | 8 | 32 | `owner_ed25519` |
 | 40 | 32 | `falcon_public_key_hash` |
 | 72 | 8 | `nonce` |

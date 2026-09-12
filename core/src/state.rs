@@ -10,7 +10,7 @@
 //! 1       1     bump
 //! 2       1     policy
 //! 3       1     flags
-//! 4       4     reserved
+//! 4       4     account_index (u32 LE; PDA seed)
 //! 8       32    owner_ed25519
 //! 40      32    falcon_public_key_hash
 //! 72      8     nonce (u64 LE)
@@ -112,7 +112,7 @@ pub mod offsets {
     pub const BUMP: usize = 1;
     pub const POLICY: usize = 2;
     pub const FLAGS: usize = 3;
-    pub const RESERVED0: usize = 4;
+    pub const ACCOUNT_INDEX: usize = 4;
     pub const OWNER_ED25519: usize = 8;
     pub const FALCON_PUBLIC_KEY_HASH: usize = 40;
     pub const NONCE: usize = 72;
@@ -179,7 +179,6 @@ impl HybridAccount<'_> {
         Ok(u64::from_le_bytes(buf))
     }
 
-    /// Read `falcon_public_key_hash` without requiring mutability.
     /// Read `falcon_required_above` when `FLAG_FALCON_THRESHOLD_SET` is set.
     pub fn falcon_required_above_from_slice(data: &[u8]) -> Result<Option<u64>, DualKeyError> {
         if data.len() != ACCOUNT_DATA_LEN {
@@ -195,6 +194,7 @@ impl HybridAccount<'_> {
         Ok(Some(u64::from_le_bytes(buf)))
     }
 
+    /// Read `falcon_public_key_hash` without requiring mutability.
     pub fn falcon_public_key_hash_from_slice(data: &[u8]) -> Result<[u8; 32], DualKeyError> {
         if data.len() != ACCOUNT_DATA_LEN {
             return Err(DualKeyError::InvalidAccountData);
@@ -204,6 +204,16 @@ impl HybridAccount<'_> {
             &data[offsets::FALCON_PUBLIC_KEY_HASH..offsets::FALCON_PUBLIC_KEY_HASH + 32],
         );
         Ok(out)
+    }
+
+    /// Read the PDA `account_index` seed stored at initialization.
+    pub fn account_index_from_slice(data: &[u8]) -> Result<u32, DualKeyError> {
+        if data.len() != ACCOUNT_DATA_LEN {
+            return Err(DualKeyError::InvalidAccountData);
+        }
+        let mut buf = [0u8; 4];
+        buf.copy_from_slice(&data[offsets::ACCOUNT_INDEX..offsets::ACCOUNT_INDEX + 4]);
+        Ok(u32::from_le_bytes(buf))
     }
 }
 
@@ -237,6 +247,17 @@ impl<'a> HybridAccount<'a> {
 
     pub fn set_bump(&mut self, bump: u8) {
         self.data[offsets::BUMP] = bump;
+    }
+
+    pub fn account_index(&self) -> u32 {
+        let mut buf = [0u8; 4];
+        buf.copy_from_slice(&self.data[offsets::ACCOUNT_INDEX..offsets::ACCOUNT_INDEX + 4]);
+        u32::from_le_bytes(buf)
+    }
+
+    pub fn set_account_index(&mut self, account_index: u32) {
+        self.data[offsets::ACCOUNT_INDEX..offsets::ACCOUNT_INDEX + 4]
+            .copy_from_slice(&account_index.to_le_bytes());
     }
 
     pub fn policy(&self) -> Result<AuthorizationPolicy, DualKeyError> {
@@ -358,6 +379,7 @@ impl<'a> HybridAccount<'a> {
     pub fn initialize_without_falcon_key(
         data: &'a mut [u8],
         bump: u8,
+        account_index: u32,
         owner_ed25519: &[u8; 32],
         falcon_public_key_hash: &[u8; 32],
         policy: AuthorizationPolicy,
@@ -369,6 +391,7 @@ impl<'a> HybridAccount<'a> {
         let mut account = Self { data };
         account.set_version(ACCOUNT_VERSION);
         account.set_bump(bump);
+        account.set_account_index(account_index);
         account.set_policy(policy);
         account.set_owner_ed25519(owner_ed25519);
         account.set_falcon_public_key_hash(falcon_public_key_hash);
@@ -380,6 +403,7 @@ impl<'a> HybridAccount<'a> {
     pub fn initialize(
         data: &'a mut [u8],
         bump: u8,
+        account_index: u32,
         owner_ed25519: &[u8; 32],
         falcon_public_key_hash: &[u8; 32],
         prepared_falcon_public_key: &[u8; PREPARED_FALCON_PUBKEY_LEN],
@@ -388,6 +412,7 @@ impl<'a> HybridAccount<'a> {
         let mut account = Self::initialize_without_falcon_key(
             data,
             bump,
+            account_index,
             owner_ed25519,
             falcon_public_key_hash,
             policy,
@@ -466,6 +491,7 @@ mod tests {
         let mut acct = HybridAccount::initialize(
             &mut buf,
             255,
+            0,
             &owner,
             &hash,
             &prepared,
@@ -474,6 +500,7 @@ mod tests {
         .unwrap();
         assert_eq!(acct.version(), ACCOUNT_VERSION);
         assert_eq!(acct.bump(), 255);
+        assert_eq!(acct.account_index(), 0);
         assert_eq!(acct.policy().unwrap(), AuthorizationPolicy::HybridAnd);
         assert_eq!(acct.owner_ed25519(), owner);
         assert_eq!(acct.falcon_public_key_hash(), hash);

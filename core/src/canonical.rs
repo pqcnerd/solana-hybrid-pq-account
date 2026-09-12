@@ -93,6 +93,14 @@ pub fn canonical_preimage(intent: &AuthorizationIntent) -> [u8; CANONICAL_PREIMA
             out[body..body + 32].copy_from_slice(&new_pubkey_hash);
             // Remaining 8 bytes stay zero (reserved).
         }
+        Action::TransferSpl {
+            destination,
+            amount,
+        } => {
+            let body = offsets::ACTION_BODY;
+            out[body..body + 32].copy_from_slice(&destination);
+            out[body + 32..body + 40].copy_from_slice(&amount.to_le_bytes());
+        }
         Action::ChangePolicy {
             new_policy,
             threshold,

@@ -50,6 +50,7 @@ fn account_with_nonce(address: Pubkey, nonce: u64) -> (Pubkey, Account) {
         let mut acct = HybridAccount::initialize(
             &mut data,
             255,
+            0,
             &[0x11; 32],
             &[0x22; 32],
             &[0x33; PREPARED_FALCON_PUBKEY_LEN],

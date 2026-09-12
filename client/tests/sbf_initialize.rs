@@ -161,6 +161,7 @@ fn initialize_writes_every_field_of_the_account() {
     let account = HybridAccount::try_from_bytes(&mut data).expect("parses");
     assert_eq!(account.version(), ACCOUNT_VERSION);
     assert_eq!(account.bump(), bump);
+    assert_eq!(account.account_index(), 0);
     assert_eq!(account.policy().unwrap(), AuthorizationPolicy::HybridAnd);
     assert_eq!(account.owner_ed25519(), owner.ed25519);
     assert_eq!(

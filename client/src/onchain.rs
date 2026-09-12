@@ -230,6 +230,8 @@ pub fn instructions_sysvar_id() -> Pubkey {
 /// the signed action recipient), instructions sysvar (readonly). The Ed25519
 /// precompile must be the **immediately preceding** instruction in the same
 /// transaction when the policy requires Ed25519.
+///
+/// For SPL transfers, use [`execute_transfer_spl_instruction`].
 pub fn execute_instruction(
     program_id: &Pubkey,
     hybrid_account: &Pubkey,
@@ -241,7 +243,7 @@ pub fn execute_instruction(
         _ => {
             return Err(ClientError::IntentFormat {
                 path: "execute".into(),
-                reason: "Execute only accepts TransferSol; use rotate_* builders for key rotation"
+                reason: "Execute builder only accepts TransferSol; use execute_transfer_spl_instruction for SPL"
                     .into(),
             });
         }
@@ -252,6 +254,51 @@ pub fn execute_instruction(
         accounts: vec![
             AccountMeta::new(*hybrid_account, false),
             AccountMeta::new(recipient, false),
+            AccountMeta::new_readonly(instructions_sysvar_id(), false),
+        ],
+        data,
+    })
+}
+
+/// Classic SPL Token program id.
+pub fn token_program_id() -> Pubkey {
+    Pubkey::from_str_const("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA")
+}
+
+/// Build `Execute` for [`dualkey_core::Action::TransferSpl`].
+///
+/// Accounts: HybridAccount, creator (PDA seed), source token, mint, destination
+/// token, token program, instructions sysvar.
+pub fn execute_transfer_spl_instruction(
+    program_id: &Pubkey,
+    hybrid_account: &Pubkey,
+    creator: &Pubkey,
+    source_token: &Pubkey,
+    mint: &Pubkey,
+    intent: &AuthorizationIntent,
+    falcon_sig: &[u8],
+) -> Result<Instruction> {
+    let destination = match intent.action {
+        dualkey_core::Action::TransferSpl { destination, .. } => {
+            Pubkey::new_from_array(destination)
+        }
+        _ => {
+            return Err(ClientError::IntentFormat {
+                path: "execute_transfer_spl".into(),
+                reason: "intent action must be TransferSpl".into(),
+            });
+        }
+    };
+    let data = execute_data(intent, falcon_sig)?;
+    Ok(Instruction {
+        program_id: *program_id,
+        accounts: vec![
+            AccountMeta::new(*hybrid_account, false),
+            AccountMeta::new_readonly(*creator, false),
+            AccountMeta::new(*source_token, false),
+            AccountMeta::new_readonly(*mint, false),
+            AccountMeta::new(destination, false),
+            AccountMeta::new_readonly(token_program_id(), false),
             AccountMeta::new_readonly(instructions_sysvar_id(), false),
         ],
         data,

@@ -157,6 +157,7 @@ pub fn process(
     let mut account = HybridAccount::initialize_without_falcon_key(
         &mut data,
         bump,
+        args.account_index,
         args.owner_ed25519,
         &falcon_public_key_hash,
         args.policy,

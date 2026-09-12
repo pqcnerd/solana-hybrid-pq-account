@@ -35,6 +35,7 @@ pub mod pda;
 pub mod processor;
 pub mod reconstruct;
 pub mod rotate;
+pub mod spl_token;
 
 pub use error::to_program_error;
 

@@ -102,4 +102,5 @@ cargo test --workspace
 cargo test -p dualkey-client --release --test sbf_policy
 ```
 
-Milestone 10 is complete. Milestone 11 (SPL) has not been started.
+Milestone 10 is complete. Milestone 11 (SPL) is documented in
+[`milestone-11.md`](milestone-11.md).

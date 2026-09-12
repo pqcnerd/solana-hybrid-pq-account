@@ -145,8 +145,8 @@ movement. The account instructions return `Unimplemented`.
 | 7 | Hybrid-authorized SOL transfer | **Done** |
 | 8 | CU + transaction-size benchmarks | **Done** |
 | 9 | Key rotation | **Done** |
-| 10 | Richer policies | Pending |
-| 11 | SPL Token | Pending |
+| 10 | Richer policies | **Done** |
+| 11 | SPL Token | **Done** |
 
 ## Repository layout
 
@@ -301,7 +301,7 @@ message telling you to.
 ## Test instructions
 
 ```bash
-# Everything (needs the .so built first; ~173 tests as of Milestone 10)
+# Everything (needs the .so built first; ~179 tests as of Milestone 11)
 cargo test --workspace
 
 # Shared types, layout, canonical encoding
@@ -331,6 +331,9 @@ cargo test -p dualkey-client --release --test sbf_rotate -- --nocapture
 # Richer policies + ChangePolicy (Milestone 10)
 cargo test -p dualkey-client --release --test sbf_policy -- --nocapture
 
+# SPL Token transfer (Milestone 11)
+cargo test -p dualkey-client --release --test sbf_spl -- --nocapture
+
 # Signature length distribution soak (10,000 signatures)
 cargo test -p dualkey-client --release --test falcon_interop -- --ignored --nocapture
 
@@ -356,6 +359,7 @@ Test groups (all under `client/tests/`):
 | `sbf_bench.rs` | SBF (M8) | Policy CU matrix (9 samples); legacy tx size ≤ 1232 without ALT |
 | `sbf_rotate.rs` | SBF (M9) | RotateEd25519 / RotateFalcon + PoP; old key cannot authorize after rotate |
 | `sbf_policy.rs` | SBF (M10) | HybridOr / FalconForPrivileged / FalconAboveThreshold; ChangePolicy stricter-of |
+| `sbf_spl.rs` | SBF (M11) | TransferSpl via PDA-signed SPL Token CPI; wrong dest/creator/balance |
 
 The SBF tests live in `client/tests/` rather than `program/tests/` on purpose:
 it keeps every Falcon **signer** out of the program package's dependency graph,
@@ -364,8 +368,8 @@ the client signs with PQClean, the program verifies with `solana-falcon512`.
 
 On-chain attack/integration coverage so far: HybridAnd success/failure,
 replay, expiry, TransferSol / rent floor, CU/size benches, key rotation with
-Falcon PoP, richer policies, and authenticated `ChangePolicy`. Still planned:
-SPL (M11).
+Falcon PoP, richer policies, authenticated `ChangePolicy`, and classic SPL
+`TransferSpl`. `RecoverAccount` remains reserved.
 
 ## Benchmarks
 
@@ -446,6 +450,7 @@ Research questions guiding the work:
 - [`docs/milestone-8.md`](docs/milestone-8.md) — CU + legacy transaction size  
 - [`docs/milestone-9.md`](docs/milestone-9.md) — key rotation + Falcon PoP  
 - [`docs/milestone-10.md`](docs/milestone-10.md) — richer policies + ChangePolicy  
+- [`docs/milestone-11.md`](docs/milestone-11.md) — SPL Token transfer  
 - [`docs/threat-model.md`](docs/threat-model.md) — adversaries and invariants  
 - [`docs/benchmark-plan.md`](docs/benchmark-plan.md) — measurement plan  
 

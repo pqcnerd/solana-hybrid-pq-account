@@ -25,7 +25,7 @@ use crate::canonical::{ACTION_BODY_LEN, INTENT_VERSION};
 use crate::error::DualKeyError;
 use crate::intent::{
     Action, AuthorizationIntent, ACTION_TAG_CHANGE_POLICY, ACTION_TAG_ROTATE_ED25519,
-    ACTION_TAG_ROTATE_FALCON, ACTION_TAG_TRANSFER_SOL,
+    ACTION_TAG_ROTATE_FALCON, ACTION_TAG_TRANSFER_SOL, ACTION_TAG_TRANSFER_SPL,
 };
 
 /// Wire length of the reconstructable intent fragment (no discriminator, no sig).
@@ -77,6 +77,14 @@ impl ExecuteIntentWire {
             Action::RotateFalconKey { new_pubkey_hash } => {
                 let body = wire_offsets::ACTION_BODY;
                 out[body..body + 32].copy_from_slice(&new_pubkey_hash);
+            }
+            Action::TransferSpl {
+                destination,
+                amount,
+            } => {
+                let body = wire_offsets::ACTION_BODY;
+                out[body..body + 32].copy_from_slice(&destination);
+                out[body + 32..body + 40].copy_from_slice(&amount.to_le_bytes());
             }
             Action::ChangePolicy {
                 new_policy,
@@ -141,6 +149,20 @@ impl Action {
                 Ok(Self::TransferSol {
                     recipient,
                     lamports,
+                })
+            }
+            ACTION_TAG_TRANSFER_SPL => {
+                let destination: [u8; 32] = body[..32]
+                    .try_into()
+                    .map_err(|_| DualKeyError::MalformedInstructionData)?;
+                let amount = u64::from_le_bytes(
+                    body[32..40]
+                        .try_into()
+                        .map_err(|_| DualKeyError::MalformedInstructionData)?,
+                );
+                Ok(Self::TransferSpl {
+                    destination,
+                    amount,
                 })
             }
             ACTION_TAG_ROTATE_ED25519 => {

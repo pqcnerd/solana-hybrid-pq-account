@@ -68,6 +68,16 @@ Constants live in [`dualkey-core::canonical`](../core/src/canonical.rs):
 action_body = recipient[32] || lamports:u64 LE
 ```
 
+### Tag `2` — `TransferSpl` (Milestone 11)
+
+```text
+action_body = destination_token_account[32] || amount:u64 LE
+```
+
+Source token account, mint, and token program are Execute accounts (not in the
+40-byte body). The HybridAccount PDA must own the source account and signs the
+SPL `TransferChecked` CPI.
+
 ### Tag `3` — `RotateEd25519Key` (Milestone 9)
 
 ```text
@@ -97,7 +107,6 @@ Remaining action tags are reserved:
 
 | Tag | Action | Milestone |
 |----:|--------|----------:|
-| 2 | TransferSpl | 11 |
 | 6 | RecoverAccount | reserved |
 
 ## Shared preimage, separate hashers

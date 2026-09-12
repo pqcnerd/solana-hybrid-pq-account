@@ -84,6 +84,7 @@ fn fixture_with_threshold(
         let mut acct = HybridAccount::initialize(
             &mut data,
             255,
+            0,
             &ed.public_bytes(),
             &falcon_hash,
             prepared.as_bytes(),

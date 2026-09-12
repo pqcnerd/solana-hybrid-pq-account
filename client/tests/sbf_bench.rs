@@ -87,6 +87,7 @@ fn fixture(policy: AuthorizationPolicy) -> Fixture {
     HybridAccount::initialize(
         &mut data,
         255,
+        0,
         &ed.public_bytes(),
         &falcon_hash,
         prepared.as_bytes(),

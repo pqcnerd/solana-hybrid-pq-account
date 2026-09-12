@@ -58,10 +58,14 @@ tempfile = "3"
 # `target/deploy/dualkey_program.so`, so the program is exercised as a real
 # SBF binary rather than as host Rust.
 mollusk-svm = { version = "0.15", features = ["precompiles"] }
+mollusk-svm-programs-token = { version = "0.15", default-features = false, features = ["token"] }
 # Version-matched to mollusk-svm 0.15's own dependencies so the `Instruction`,
 # `Account` and `ProgramError` types are identical, not merely similar.
 solana-account = "4.3"
 solana-program-error = "3.0"
+solana-program-pack = "3"
+solana-program-option = "3"
+spl-token-interface = "2"
 # Legacy transaction serialization for Milestone 8 size measurements.
 solana-transaction = { version = "4.1", features = ["serde"] }
 solana-signature = "3"

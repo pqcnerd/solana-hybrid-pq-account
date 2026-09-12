@@ -149,6 +149,16 @@ impl AuthorizationPolicy {
                         SignatureRequirement::Ed25519
                     }
                 }
+                // Threshold is interpreted in the action's native units (raw
+                // token amount for SPL). Same comparison shape as TransferSol.
+                Action::TransferSpl { amount, .. } => {
+                    let thr = threshold.unwrap_or(0);
+                    if *amount > thr {
+                        SignatureRequirement::Falcon
+                    } else {
+                        SignatureRequirement::Ed25519
+                    }
+                }
                 // Rotations and policy changes always require Falcon under this mode.
                 _ => SignatureRequirement::Falcon,
             },

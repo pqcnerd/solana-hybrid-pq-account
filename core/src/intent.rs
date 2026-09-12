@@ -7,7 +7,7 @@ use crate::canonical::INTENT_VERSION;
 
 /// Action discriminator for `TransferSol` (Milestone 7).
 pub const ACTION_TAG_TRANSFER_SOL: u8 = 1;
-/// Action discriminator for `TransferSpl` (Milestone 11 — reserved).
+/// Action discriminator for `TransferSpl` (Milestone 11).
 pub const ACTION_TAG_TRANSFER_SPL: u8 = 2;
 /// Action discriminator for `RotateEd25519Key` (Milestone 9).
 pub const ACTION_TAG_ROTATE_ED25519: u8 = 3;
@@ -47,6 +47,17 @@ pub enum Action {
         /// SHA-256 of the new 897-byte Falcon wire public key.
         new_pubkey_hash: [u8; 32],
     },
+    /// Transfer SPL tokens from a DualKey-controlled token account (Milestone 11).
+    ///
+    /// Wire body matches `TransferSol`: `destination_token_account[32] ‖ amount u64 LE`.
+    /// The source token account, mint, and token program are instruction accounts;
+    /// the HybridAccount PDA signs the SPL CPI via `invoke_signed`.
+    TransferSpl {
+        /// Destination SPL token account (must match the writable account meta).
+        destination: [u8; 32],
+        /// Raw token amount (base units).
+        amount: u64,
+    },
     /// Replace the authorization policy (Milestone 10).
     ///
     /// Authorized under the **stricter** of the current and target policies'
@@ -69,6 +80,7 @@ impl Action {
     pub const fn tag(self) -> u8 {
         match self {
             Self::TransferSol { .. } => ACTION_TAG_TRANSFER_SOL,
+            Self::TransferSpl { .. } => ACTION_TAG_TRANSFER_SPL,
             Self::RotateEd25519Key { .. } => ACTION_TAG_ROTATE_ED25519,
             Self::RotateFalconKey { .. } => ACTION_TAG_ROTATE_FALCON,
             Self::ChangePolicy { .. } => ACTION_TAG_CHANGE_POLICY,
@@ -77,7 +89,7 @@ impl Action {
 
     /// Whether this action is "privileged" for [`crate::AuthorizationPolicy::FalconForPrivileged`].
     ///
-    /// Transfers are normal; key rotation and policy changes are privileged.
+    /// Transfers (SOL and SPL) are normal; key rotation and policy changes are privileged.
     pub const fn is_privileged(self) -> bool {
         matches!(
             self,

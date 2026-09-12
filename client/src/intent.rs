@@ -17,6 +17,7 @@ use crate::error::{ClientError, Result};
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ActionSpec {
     TransferSol { recipient: String, lamports: u64 },
+    TransferSpl { destination: String, amount: u64 },
     RotateEd25519Key { new_pubkey: String },
     RotateFalconKey { new_pubkey_hash: String },
     ChangePolicy { new_policy: u8, threshold: u64 },
@@ -58,6 +59,13 @@ impl IntentSpec {
                 recipient: hex32("action.recipient", recipient)?,
                 lamports: *lamports,
             },
+            ActionSpec::TransferSpl {
+                destination,
+                amount,
+            } => Action::TransferSpl {
+                destination: hex32("action.destination", destination)?,
+                amount: *amount,
+            },
             ActionSpec::RotateEd25519Key { new_pubkey } => Action::RotateEd25519Key {
                 new_pubkey: hex32("action.new_pubkey", new_pubkey)?,
             },
@@ -93,6 +101,13 @@ impl IntentSpec {
             } => ActionSpec::TransferSol {
                 recipient: hex::encode(recipient),
                 lamports,
+            },
+            Action::TransferSpl {
+                destination,
+                amount,
+            } => ActionSpec::TransferSpl {
+                destination: hex::encode(destination),
+                amount,
             },
             Action::RotateEd25519Key { new_pubkey } => ActionSpec::RotateEd25519Key {
                 new_pubkey: hex::encode(new_pubkey),
