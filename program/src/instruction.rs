@@ -54,6 +54,18 @@ pub enum DualKeyInstruction {
     ///
     /// Instruction data: `[242] ‖ preimage(172) ‖ expected_digest(32)`
     VerifyCanonicalDigest = 242,
+
+    /// Milestone 4 harness: reconstruct a canonical intent from HybridAccount
+    /// context + wire fields, hash with `sol_sha256`, and compare to an expected
+    /// digest. Proves on-chain reconstruction agrees with the client without
+    /// implementing authorization.
+    ///
+    /// Accounts:
+    /// * `[0]` readonly — HybridAccount (address + nonce enter the digest)
+    ///
+    /// Instruction data:
+    /// `[243] ‖ expiry(8) ‖ action_tag(1) ‖ action_body(40) ‖ expected_digest(32)`
+    ReconstructCanonicalDigest = 243,
 }
 
 impl DualKeyInstruction {
@@ -68,6 +80,7 @@ impl DualKeyInstruction {
             240 => Some(Self::VerifyFalconPrepared),
             241 => Some(Self::VerifyFalconRaw),
             242 => Some(Self::VerifyCanonicalDigest),
+            243 => Some(Self::ReconstructCanonicalDigest),
             _ => None,
         }
     }
@@ -76,11 +89,14 @@ impl DualKeyInstruction {
         self as u8
     }
 
-    /// Whether this is a Milestone 2 verification-harness instruction.
+    /// Whether this is a verification/reconstruction harness instruction.
     pub const fn is_verification_harness(self) -> bool {
         matches!(
             self,
-            Self::VerifyFalconPrepared | Self::VerifyFalconRaw | Self::VerifyCanonicalDigest
+            Self::VerifyFalconPrepared
+                | Self::VerifyFalconRaw
+                | Self::VerifyCanonicalDigest
+                | Self::ReconstructCanonicalDigest
         )
     }
 }

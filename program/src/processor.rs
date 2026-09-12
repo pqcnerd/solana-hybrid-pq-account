@@ -1,9 +1,11 @@
 //! Instruction processor.
 //!
-//! Milestone 2 implements the verification-harness instructions (240–242).
-//! Milestone 3 implements `Initialize` (0). The remaining account instructions
-//! still return [`DualKeyError::Unimplemented`]: no placeholder crypto, no
-//! permissive verification stubs, and never a silent success.
+//! Milestone 2: verification harness (240–242).
+//! Milestone 3: `Initialize` (0).
+//! Milestone 4: reconstruction harness (243).
+//! Remaining account instructions still return [`DualKeyError::Unimplemented`]:
+//! no placeholder crypto, no permissive verification stubs, and never a silent
+//! success.
 
 use dualkey_core::{DualKeyError, CANONICAL_PREIMAGE_LEN, DIGEST_LEN};
 use solana_account_info::AccountInfo;
@@ -36,6 +38,10 @@ pub fn process(
         }
         DualKeyInstruction::VerifyFalconRaw => process_verify_falcon_raw(payload),
         DualKeyInstruction::VerifyCanonicalDigest => process_verify_canonical_digest(payload),
+
+        DualKeyInstruction::ReconstructCanonicalDigest => {
+            crate::reconstruct::process_reconstruct_canonical_digest(program_id, accounts, payload)
+        }
 
         DualKeyInstruction::Initialize => crate::initialize::process(program_id, accounts, payload),
 

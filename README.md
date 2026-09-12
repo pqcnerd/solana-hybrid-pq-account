@@ -139,7 +139,7 @@ movement. The account instructions return `Unimplemented`.
 | 1 | Off-chain CLI: Falcon + Ed25519 keygen/sign/verify same digest | **Done** |
 | 2 | Falcon verify under SBF (minimal program) | **Done** |
 | 3 | HybridAccount PDA (no transfers yet) | **Done** |
-| 4 | Canonical intent encoding (core encoding landed early in M1) | Partial |
+| 4 | Canonical intent encoding + on-chain reconstruction | **Done** |
 | 5 | HybridAnd authorization | Pending |
 | 6 | Replay protection + expiry | Pending |
 | 7 | Hybrid-authorized SOL transfer | Pending |
@@ -301,7 +301,7 @@ message telling you to.
 ## Test instructions
 
 ```bash
-# Everything (99 tests as of Milestone 3; needs the .so built first)
+# Everything (122 tests as of Milestone 4; needs the .so built first)
 cargo test --workspace
 
 # Shared types, layout, canonical encoding
@@ -315,6 +315,9 @@ cargo test -p dualkey-client --release --test sbf_falcon -- --nocapture
 
 # HybridAccount PDA initialization, with CU and rent figures
 cargo test -p dualkey-client --release --test sbf_initialize -- --nocapture
+
+# On-chain intent reconstruction (Milestone 4)
+cargo test -p dualkey-client --release --test sbf_reconstruct -- --nocapture
 
 # Signature length distribution soak (10,000 signatures)
 cargo test -p dualkey-client --release --test falcon_interop -- --ignored --nocapture
@@ -336,6 +339,7 @@ Test groups (all under `client/tests/`):
 | `encoding_review.rs` | Review | Compressed-encoding invariants; PQClean accepts the padded 666-byte form |
 | `sbf_falcon.rs` | SBF (M2) | Falcon verify + `sol_sha256` inside the SBF VM; malformed input; CU |
 | `sbf_initialize.rs` | SBF (M3) | HybridAccount PDA creation, on-chain Falcon key preparation, rejection paths, CU and rent |
+| `sbf_reconstruct.rs` | SBF (M4) | Intent reconstruction from trusted context + 49-byte wire; digest match; wrong context fails |
 
 The SBF tests live in `client/tests/` rather than `program/tests/` on purpose:
 it keeps every Falcon **signer** out of the program package's dependency graph,

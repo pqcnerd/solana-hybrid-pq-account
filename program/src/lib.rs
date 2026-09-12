@@ -6,10 +6,12 @@
 //!
 //! Milestone 3 adds `Initialize`, which creates the HybridAccount PDA holding
 //! the Ed25519 owner key, the prepared Falcon public key, a nonce and a policy.
-//! It still moves no value: the only lamport flow is rent funding for the new
-//! account. `Execute` and the rotation instructions remain
-//! [`dualkey_core::DualKeyError::Unimplemented`], so a HybridAccount cannot yet
-//! authorize anything.
+//!
+//! Milestone 4 adds on-chain intent reconstruction (discriminator 243): the
+//! program rebuilds the canonical preimage from trusted context + a 49-byte wire
+//! fragment and hashes it with `sol_sha256`. `Execute` still returns
+//! [`dualkey_core::DualKeyError::Unimplemented`] — reconstruction is not
+//! authorization.
 //!
 //! Falcon key generation and Falcon signing never happen here; this crate
 //! contains verification only, and `pqcrypto-falcon` is absent from its
@@ -20,12 +22,14 @@ use solana_program_entrypoint::entrypoint;
 use solana_pubkey::Pubkey;
 
 pub mod auth;
+pub mod chain_domain;
 pub mod error;
 pub mod hash;
 pub mod initialize;
 pub mod instruction;
 pub mod pda;
 pub mod processor;
+pub mod reconstruct;
 
 pub use error::to_program_error;
 

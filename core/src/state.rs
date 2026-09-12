@@ -129,6 +129,26 @@ pub struct HybridAccount<'a> {
     data: &'a mut [u8],
 }
 
+impl HybridAccount<'_> {
+    /// Read `version` from a borrowed account buffer without requiring mutability.
+    pub fn version_from_slice(data: &[u8]) -> Result<u8, DualKeyError> {
+        if data.len() != ACCOUNT_DATA_LEN {
+            return Err(DualKeyError::InvalidAccountData);
+        }
+        Ok(data[offsets::VERSION])
+    }
+
+    /// Read `nonce` from a borrowed account buffer without requiring mutability.
+    pub fn nonce_from_slice(data: &[u8]) -> Result<u64, DualKeyError> {
+        if data.len() != ACCOUNT_DATA_LEN {
+            return Err(DualKeyError::InvalidAccountData);
+        }
+        let mut buf = [0u8; 8];
+        buf.copy_from_slice(&data[offsets::NONCE..offsets::NONCE + 8]);
+        Ok(u64::from_le_bytes(buf))
+    }
+}
+
 impl<'a> HybridAccount<'a> {
     /// Borrow account bytes as a DualKey account.
     ///

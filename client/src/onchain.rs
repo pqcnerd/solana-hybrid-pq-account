@@ -9,7 +9,10 @@
 //! program expects; broadcasting needs an RPC endpoint and is out of scope until
 //! the transfer milestone.
 
-use dualkey_core::{pda_seeds, AuthorizationPolicy, ACCOUNT_INDEX_LEN, FALCON_WIRE_PUBKEY_LEN};
+use dualkey_core::{
+    pda_seeds, AuthorizationIntent, AuthorizationPolicy, ExecuteIntentWire, IntentContext,
+    ACCOUNT_INDEX_LEN, CHAIN_DOMAIN_LOCALNET, FALCON_WIRE_PUBKEY_LEN,
+};
 use solana_instruction::{AccountMeta, Instruction};
 use solana_pubkey::Pubkey;
 
@@ -18,10 +21,21 @@ use crate::error::{ClientError, Result};
 /// `Initialize` discriminator, mirroring `DualKeyInstruction::Initialize`.
 pub const INITIALIZE_DISCRIMINATOR: u8 = 0;
 
+/// Milestone 4 reconstruction-harness discriminator.
+pub const RECONSTRUCT_DIGEST_DISCRIMINATOR: u8 = 243;
+
 /// Total `Initialize` instruction data length.
 pub const INITIALIZE_DATA_LEN: usize = 1 + ACCOUNT_INDEX_LEN + 32 + 1 + FALCON_WIRE_PUBKEY_LEN;
 
 const _: () = assert!(INITIALIZE_DATA_LEN == 935);
+
+/// Default chain domain for unmarked / research client builds.
+///
+/// Must match the program's default (`localnet`) so reconstruction digests
+/// agree unless the program was built with an explicit cluster feature.
+pub fn default_chain_domain() -> [u8; 32] {
+    CHAIN_DOMAIN_LOCALNET
+}
 
 /// The System program address, which `Initialize` requires as its third account.
 pub fn system_program_id() -> Pubkey {
@@ -101,4 +115,81 @@ pub fn initialize_instruction(
         data,
     };
     Ok((instruction, hybrid_account, bump))
+}
+
+/// Build a signing intent whose derived fields match on-chain reconstruction.
+///
+/// `chain_domain` defaults to [`default_chain_domain`] when the program was
+/// built without an explicit cluster feature.
+pub fn signing_intent(
+    program_id: &Pubkey,
+    account: &Pubkey,
+    nonce: u64,
+    expiry_slot: u64,
+    action: dualkey_core::Action,
+) -> AuthorizationIntent {
+    signing_intent_with_domain(
+        default_chain_domain(),
+        program_id,
+        account,
+        nonce,
+        expiry_slot,
+        action,
+    )
+}
+
+/// Like [`signing_intent`], but with an explicit chain domain (for cluster-
+/// specific program builds).
+pub fn signing_intent_with_domain(
+    chain_domain: [u8; 32],
+    program_id: &Pubkey,
+    account: &Pubkey,
+    nonce: u64,
+    expiry_slot: u64,
+    action: dualkey_core::Action,
+) -> AuthorizationIntent {
+    AuthorizationIntent::new(
+        chain_domain,
+        program_id.to_bytes(),
+        account.to_bytes(),
+        nonce,
+        expiry_slot,
+        action,
+    )
+}
+
+/// Trusted context the program will use when reconstructing `intent`.
+pub fn intent_context_for(intent: &AuthorizationIntent) -> IntentContext {
+    IntentContext {
+        chain_domain: intent.chain_domain,
+        program_id: intent.program_id,
+        account: intent.account,
+        nonce: intent.nonce,
+    }
+}
+
+/// Encode the 49-byte Execute intent wire fragment (no discriminator, no sig).
+pub fn encode_execute_intent_wire(intent: &AuthorizationIntent) -> [u8; 49] {
+    ExecuteIntentWire::from_intent(intent).encode()
+}
+
+/// Build the Milestone 4 reconstruction-harness instruction.
+///
+/// Compares the on-chain reconstructed digest to `expected_digest`. Does not
+/// authorize anything.
+pub fn reconstruct_digest_instruction(
+    program_id: &Pubkey,
+    hybrid_account: &Pubkey,
+    intent: &AuthorizationIntent,
+    expected_digest: &[u8; 32],
+) -> Instruction {
+    let mut data = Vec::with_capacity(1 + 49 + 32);
+    data.push(RECONSTRUCT_DIGEST_DISCRIMINATOR);
+    data.extend_from_slice(&encode_execute_intent_wire(intent));
+    data.extend_from_slice(expected_digest);
+    Instruction {
+        program_id: *program_id,
+        accounts: vec![AccountMeta::new_readonly(*hybrid_account, false)],
+        data,
+    }
 }

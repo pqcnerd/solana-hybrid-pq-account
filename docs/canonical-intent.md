@@ -1,10 +1,12 @@
 # Canonical Authorization Intent
 
-**Status:** Implemented in `dualkey-core` as of Milestone 1.
+**Status:** Implemented. Encoding landed in Milestone 1; on-chain reconstruction
+and compile-time `chain_domain` selection closed in Milestone 4.
 
 The encoding was pulled forward from Milestone 4 because Milestone 1 requires
-both schemes to sign one digest built through the shared crate. Reconstruction
-of derivable fields on-chain remains a later milestone.
+both schemes to sign one digest built through the shared crate. Milestone 4
+adds the reconstruction rule the program uses so the full intent never needs to
+travel on the wire.
 
 Both Ed25519 and Falcon-512 MUST sign the exact same digest:
 
@@ -145,18 +147,20 @@ verification.
 This strengthens security: a field derived from trusted context cannot be
 lied about on the wire at all.
 
-### Wire payload (execute instruction, conceptual)
+### Wire payload (execute intent fragment)
 
 ```text
-discriminator: u8           // Execute = 1
 expiry_slot:   u64 LE
 action_tag:    u8
 action_body:   [u8; 40]
-falcon_sig:    [u8; 666]    // compressed, zero-padded
 ```
 
-Approximate size: `1 + 8 + 1 + 40 + 666 = 716` bytes of DualKey instruction
-data, plus a separate 144-byte Ed25519 precompile instruction.
+Encoded by `dualkey_core::ExecuteIntentWire` (49 bytes). The Milestone 5
+`Execute` instruction prepends discriminator `1` and appends the 666-byte Falcon
+signature (`1 + 49 + 666 = 716`).
+
+Approximate DualKey instruction data for Execute: **716 bytes**, plus a separate
+144-byte Ed25519 precompile instruction.
 
 ## `chain_domain` and the genesis-hash problem
 
@@ -165,12 +169,22 @@ supplied by the user at initialization would be attacker-chosen and would not
 provide cross-network protection.
 
 DualKey therefore uses a **compile-time** `chain_domain` constant, selected
-via Cargo features (`mainnet` / `devnet` / `localnet`). Cross-network replay
-resistance holds only between differently built program binaries.
+via Cargo features on `dualkey-program` (`mainnet` / `devnet` / `localnet`).
+Cross-network replay resistance holds only between differently built program
+binaries.
 
-Local validators mint a fresh genesis hash per start; localnet builds use a
-fixed research domain string (documented in architecture) plus a build-time
-override path when needed.
+| Feature | Constant | Bytes (ASCII, zero-padded to 32) |
+|---------|----------|----------------------------------|
+| `mainnet` | `CHAIN_DOMAIN_MAINNET` | `dualkey:mainnet` |
+| `devnet` | `CHAIN_DOMAIN_DEVNET` | `dualkey:devnet` |
+| `localnet` (default) | `CHAIN_DOMAIN_LOCALNET` | `dualkey:localnet` |
+
+When no feature is selected the program defaults to `localnet`, matching
+`dualkey_client::onchain::default_chain_domain()`. Enabling more than one
+cluster feature is a compile error.
+
+Local validators mint a fresh genesis hash per start; localnet builds use the
+fixed research label above rather than pretending to track genesis.
 
 ## What must never be omitted from the signed digest
 
@@ -191,7 +205,8 @@ Changing any single bit of the preimage MUST invalidate both signatures.
 - [x] Client: `sha2::Sha256` over preimage (Milestone 1)
 - [x] Publish known-answer vectors (Milestone 1)
 - [x] Negative tests: one-bit flips fail both schemes (Milestone 1)
-- [ ] Program: `sol_sha256` over reconstructed preimage (Milestone 2+)
-- [ ] Cross-layer test: `sol_sha256` matches `TEST_VECTOR_DIGEST` (Milestone 2)
-- [ ] On-chain field reconstruction (Milestone 4)
+- [x] Program: `sol_sha256` over preimage bytes (Milestone 2 harness 242)
+- [x] Cross-layer test: `sol_sha256` matches `TEST_VECTOR_DIGEST` (Milestone 2)
+- [x] On-chain field reconstruction (Milestone 4: harness 243 + `ExecuteIntentWire`)
+- [x] Compile-time `chain_domain` constants + program features (Milestone 4)
 - [ ] Measure serialized transaction size against the 1232-byte legacy limit (Milestone 8)
