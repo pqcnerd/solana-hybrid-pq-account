@@ -495,15 +495,13 @@ fn garbage_prepared_key_fails_verification_without_panicking() {
     }
 }
 
-/// The instructions that would authorize or move value must still refuse to do
-/// anything. `Initialize` is excluded: Milestone 3 implements it (see
-/// `sbf_initialize.rs`), and it authorizes nothing on its own — a HybridAccount
-/// still cannot spend until `Execute` exists.
+/// The instructions that would mutate keys or policy must still refuse.
+/// `Execute` is excluded: Milestone 5 implements authorization (still no
+/// transfers or nonce consumption).
 #[test]
-fn authorizing_instructions_remain_unimplemented() {
+fn mutating_instructions_remain_unimplemented() {
     let mollusk = mollusk();
     for disc in [
-        DualKeyInstruction::Execute,
         DualKeyInstruction::RotateEd25519Key,
         DualKeyInstruction::RotateFalconKey,
         DualKeyInstruction::ChangePolicy,

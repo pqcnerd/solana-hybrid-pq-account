@@ -3,9 +3,9 @@
 //! Milestone 2: verification harness (240–242).
 //! Milestone 3: `Initialize` (0).
 //! Milestone 4: reconstruction harness (243).
-//! Remaining account instructions still return [`DualKeyError::Unimplemented`]:
-//! no placeholder crypto, no permissive verification stubs, and never a silent
-//! success.
+//! Milestone 5: `Execute` authorization (1).
+//! Rotation / policy-change instructions still return
+//! [`DualKeyError::Unimplemented`].
 
 use dualkey_core::{DualKeyError, CANONICAL_PREIMAGE_LEN, DIGEST_LEN};
 use solana_account_info::AccountInfo;
@@ -45,8 +45,9 @@ pub fn process(
 
         DualKeyInstruction::Initialize => crate::initialize::process(program_id, accounts, payload),
 
-        DualKeyInstruction::Execute
-        | DualKeyInstruction::RotateEd25519Key
+        DualKeyInstruction::Execute => crate::execute::process(program_id, accounts, payload),
+
+        DualKeyInstruction::RotateEd25519Key
         | DualKeyInstruction::RotateFalconKey
         | DualKeyInstruction::ChangePolicy => {
             msg!("DualKey: instruction {} not yet implemented", ix.as_u8());

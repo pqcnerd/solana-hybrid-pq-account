@@ -36,6 +36,9 @@ solana-falcon512 = { workspace = true }
 solana-pubkey = { version = "4.1", features = ["curve25519", "std"] }
 solana-instruction = "3.2"
 solana-system-interface = "3"
+# Ed25519 precompile instruction builder (Milestone 5 HybridAnd client path).
+solana-ed25519-program = "3"
+solana-sdk-ids = "3"
 
 ed25519-dalek = "2"
 rand = "0.8"
@@ -54,7 +57,7 @@ tempfile = "3"
 # signs off-chain, and the program only verifies. Mollusk loads the compiled
 # `target/deploy/dualkey_program.so`, so the program is exercised as a real
 # SBF binary rather than as host Rust.
-mollusk-svm = "0.15"
+mollusk-svm = { version = "0.15", features = ["precompiles"] }
 # Version-matched to mollusk-svm 0.15's own dependencies so the `Instruction`,
 # `Account` and `ProgramError` types are identical, not merely similar.
 solana-account = "4.3"

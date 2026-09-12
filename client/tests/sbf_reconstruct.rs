@@ -15,7 +15,6 @@ use dualkey_program::chain_domain::CHAIN_DOMAIN;
 use dualkey_program::instruction::DualKeyInstruction;
 use mollusk_svm::{program::loader_keys, result::Check, Mollusk};
 use solana_account::Account;
-use solana_instruction::Instruction;
 use solana_program_error::ProgramError;
 use solana_pubkey::Pubkey;
 
@@ -322,18 +321,12 @@ fn unsupported_account_version_is_rejected() {
     );
 }
 
+/// `Execute` is implemented in Milestone 5; reconstruction harness still works.
 #[test]
-fn execute_remains_unimplemented() {
-    let mollusk = mollusk();
-    mollusk.process_and_validate_instruction(
-        &Instruction {
-            program_id: program_id(),
-            accounts: vec![],
-            data: vec![DualKeyInstruction::Execute.as_u8()],
-        },
-        &[],
-        &[custom(DualKeyError::Unimplemented)],
-    );
+fn execute_remains_authorization_only_until_transfer_milestone() {
+    // Kept as a documentation anchor: M5 authorizes, M7 transfers.
+    // Behavioural coverage lives in `sbf_hybrid.rs`.
+    assert_eq!(DualKeyInstruction::Execute.as_u8(), 1);
 }
 
 #[test]

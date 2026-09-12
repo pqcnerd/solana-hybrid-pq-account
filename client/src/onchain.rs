@@ -11,7 +11,8 @@
 
 use dualkey_core::{
     pda_seeds, AuthorizationIntent, AuthorizationPolicy, ExecuteIntentWire, IntentContext,
-    ACCOUNT_INDEX_LEN, CHAIN_DOMAIN_LOCALNET, FALCON_WIRE_PUBKEY_LEN,
+    ACCOUNT_INDEX_LEN, CHAIN_DOMAIN_LOCALNET, EXECUTE_INTENT_WIRE_LEN, FALCON_SIGNATURE_LEN,
+    FALCON_WIRE_PUBKEY_LEN,
 };
 use solana_instruction::{AccountMeta, Instruction};
 use solana_pubkey::Pubkey;
@@ -21,13 +22,20 @@ use crate::error::{ClientError, Result};
 /// `Initialize` discriminator, mirroring `DualKeyInstruction::Initialize`.
 pub const INITIALIZE_DISCRIMINATOR: u8 = 0;
 
+/// `Execute` discriminator, mirroring `DualKeyInstruction::Execute`.
+pub const EXECUTE_DISCRIMINATOR: u8 = 1;
+
 /// Milestone 4 reconstruction-harness discriminator.
 pub const RECONSTRUCT_DIGEST_DISCRIMINATOR: u8 = 243;
 
 /// Total `Initialize` instruction data length.
 pub const INITIALIZE_DATA_LEN: usize = 1 + ACCOUNT_INDEX_LEN + 32 + 1 + FALCON_WIRE_PUBKEY_LEN;
 
+/// Total `Execute` instruction data length (disc + wire intent + Falcon sig).
+pub const EXECUTE_DATA_LEN: usize = 1 + EXECUTE_INTENT_WIRE_LEN + FALCON_SIGNATURE_LEN;
+
 const _: () = assert!(INITIALIZE_DATA_LEN == 935);
+const _: () = assert!(EXECUTE_DATA_LEN == 716);
 
 /// Default chain domain for unmarked / research client builds.
 ///
@@ -192,4 +200,59 @@ pub fn reconstruct_digest_instruction(
         accounts: vec![AccountMeta::new_readonly(*hybrid_account, false)],
         data,
     }
+}
+
+/// Encode `Execute` instruction data: wire intent + Falcon signature.
+pub fn execute_data(intent: &AuthorizationIntent, falcon_sig: &[u8]) -> Result<Vec<u8>> {
+    if falcon_sig.len() != FALCON_SIGNATURE_LEN {
+        return Err(ClientError::KeyFileLength {
+            path: "falcon signature".to_string(),
+            expected: FALCON_SIGNATURE_LEN,
+            actual: falcon_sig.len(),
+        });
+    }
+    let mut data = Vec::with_capacity(EXECUTE_DATA_LEN);
+    data.push(EXECUTE_DISCRIMINATOR);
+    data.extend_from_slice(&encode_execute_intent_wire(intent));
+    data.extend_from_slice(falcon_sig);
+    debug_assert_eq!(data.len(), EXECUTE_DATA_LEN);
+    Ok(data)
+}
+
+/// The instructions sysvar address (`Sysvar1nstructions...`).
+pub fn instructions_sysvar_id() -> Pubkey {
+    Pubkey::from(solana_sdk_ids::sysvar::instructions::ID.to_bytes())
+}
+
+/// Build the `Execute` instruction (authorization only in Milestone 5).
+///
+/// Accounts: HybridAccount (readonly), instructions sysvar (readonly).
+/// The Ed25519 precompile must be the **immediately preceding** instruction in
+/// the same transaction when the policy requires Ed25519.
+pub fn execute_instruction(
+    program_id: &Pubkey,
+    hybrid_account: &Pubkey,
+    intent: &AuthorizationIntent,
+    falcon_sig: &[u8],
+) -> Result<Instruction> {
+    let data = execute_data(intent, falcon_sig)?;
+    Ok(Instruction {
+        program_id: *program_id,
+        accounts: vec![
+            AccountMeta::new_readonly(*hybrid_account, false),
+            AccountMeta::new_readonly(instructions_sysvar_id(), false),
+        ],
+        data,
+    })
+}
+
+/// Build an Ed25519 precompile instruction over `message`.
+///
+/// For DualKey authorization, `message` is the 32-byte intent digest.
+pub fn ed25519_precompile_instruction(
+    message: &[u8],
+    signature: &[u8; 64],
+    pubkey: &[u8; 32],
+) -> Instruction {
+    solana_ed25519_program::new_ed25519_instruction_with_signature(message, signature, pubkey)
 }

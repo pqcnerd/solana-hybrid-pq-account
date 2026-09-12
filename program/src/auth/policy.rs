@@ -14,15 +14,115 @@ pub struct SignatureValidity {
 
 /// Evaluate whether `sigs` satisfies `policy`.
 ///
-/// Milestone 0: returns [`DualKeyError::Unimplemented`] for all policies so
-/// no authorization path can succeed early. Milestone 5 implements
-/// Ed25519Only / FalconOnly / HybridAnd.
+/// Implemented modes:
+/// * [`AuthorizationPolicy::Ed25519Only`] — requires `ed25519_valid`
+/// * [`AuthorizationPolicy::FalconOnly`] — requires `falcon_valid`
+/// * [`AuthorizationPolicy::HybridAnd`] — requires **both**; never falls back
+///
+/// Unimplemented modes return [`DualKeyError::PolicyNotImplemented`].
 pub fn evaluate_policy(
     policy: AuthorizationPolicy,
-    _sigs: SignatureValidity,
+    sigs: SignatureValidity,
 ) -> Result<(), DualKeyError> {
     if !policy.is_implemented() {
         return Err(DualKeyError::PolicyNotImplemented);
     }
-    Err(DualKeyError::Unimplemented)
+
+    match policy {
+        AuthorizationPolicy::Ed25519Only => {
+            if sigs.ed25519_valid {
+                Ok(())
+            } else {
+                Err(DualKeyError::InvalidEd25519)
+            }
+        }
+        AuthorizationPolicy::FalconOnly => {
+            if sigs.falcon_valid {
+                Ok(())
+            } else {
+                Err(DualKeyError::InvalidFalcon)
+            }
+        }
+        AuthorizationPolicy::HybridAnd => {
+            // Both required. Report the first failure so logs name a scheme;
+            // never return Ok when only one half verifies.
+            if !sigs.ed25519_valid {
+                return Err(DualKeyError::InvalidEd25519);
+            }
+            if !sigs.falcon_valid {
+                return Err(DualKeyError::InvalidFalcon);
+            }
+            Ok(())
+        }
+        AuthorizationPolicy::HybridOr
+        | AuthorizationPolicy::FalconForPrivileged
+        | AuthorizationPolicy::FalconAboveThreshold => Err(DualKeyError::PolicyNotImplemented),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hybrid_and_never_falls_back() {
+        assert!(evaluate_policy(
+            AuthorizationPolicy::HybridAnd,
+            SignatureValidity {
+                ed25519_valid: true,
+                falcon_valid: true,
+            },
+        )
+        .is_ok());
+        assert_eq!(
+            evaluate_policy(
+                AuthorizationPolicy::HybridAnd,
+                SignatureValidity {
+                    ed25519_valid: true,
+                    falcon_valid: false,
+                },
+            ),
+            Err(DualKeyError::InvalidFalcon)
+        );
+        assert_eq!(
+            evaluate_policy(
+                AuthorizationPolicy::HybridAnd,
+                SignatureValidity {
+                    ed25519_valid: false,
+                    falcon_valid: true,
+                },
+            ),
+            Err(DualKeyError::InvalidEd25519)
+        );
+        assert_eq!(
+            evaluate_policy(
+                AuthorizationPolicy::HybridAnd,
+                SignatureValidity {
+                    ed25519_valid: false,
+                    falcon_valid: false,
+                },
+            ),
+            Err(DualKeyError::InvalidEd25519)
+        );
+    }
+
+    #[test]
+    fn single_scheme_policies() {
+        assert!(evaluate_policy(
+            AuthorizationPolicy::Ed25519Only,
+            SignatureValidity {
+                ed25519_valid: true,
+                falcon_valid: false,
+            },
+        )
+        .is_ok());
+        assert!(evaluate_policy(
+            AuthorizationPolicy::FalconOnly,
+            SignatureValidity {
+                ed25519_valid: false,
+                falcon_valid: true,
+            },
+        )
+        .is_ok());
+    }
 }

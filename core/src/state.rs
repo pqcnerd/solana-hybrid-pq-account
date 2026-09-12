@@ -130,6 +130,37 @@ pub struct HybridAccount<'a> {
 }
 
 impl HybridAccount<'_> {
+    /// Read `owner_ed25519` from a borrowed account buffer.
+    pub fn owner_ed25519_from_slice(data: &[u8]) -> Result<[u8; 32], DualKeyError> {
+        if data.len() != ACCOUNT_DATA_LEN {
+            return Err(DualKeyError::InvalidAccountData);
+        }
+        let mut out = [0u8; 32];
+        out.copy_from_slice(&data[offsets::OWNER_ED25519..offsets::OWNER_ED25519 + 32]);
+        Ok(out)
+    }
+
+    /// Read the authorization policy byte from a borrowed account buffer.
+    pub fn policy_from_slice(data: &[u8]) -> Result<crate::AuthorizationPolicy, DualKeyError> {
+        if data.len() != ACCOUNT_DATA_LEN {
+            return Err(DualKeyError::InvalidAccountData);
+        }
+        crate::AuthorizationPolicy::from_u8(data[offsets::POLICY])
+            .ok_or(DualKeyError::InvalidAccountData)
+    }
+
+    /// Borrow the prepared Falcon public key region from an immutable buffer.
+    pub fn prepared_falcon_public_key_from_slice(
+        data: &[u8],
+    ) -> Result<&[u8; PREPARED_FALCON_PUBKEY_LEN], DualKeyError> {
+        if data.len() != ACCOUNT_DATA_LEN {
+            return Err(DualKeyError::InvalidAccountData);
+        }
+        data[offsets::PREPARED_FALCON_PUBLIC_KEY..ACCOUNT_DATA_LEN]
+            .try_into()
+            .map_err(|_| DualKeyError::InvalidAccountData)
+    }
+
     /// Read `version` from a borrowed account buffer without requiring mutability.
     pub fn version_from_slice(data: &[u8]) -> Result<u8, DualKeyError> {
         if data.len() != ACCOUNT_DATA_LEN {

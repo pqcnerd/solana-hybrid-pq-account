@@ -140,7 +140,7 @@ movement. The account instructions return `Unimplemented`.
 | 2 | Falcon verify under SBF (minimal program) | **Done** |
 | 3 | HybridAccount PDA (no transfers yet) | **Done** |
 | 4 | Canonical intent encoding + on-chain reconstruction | **Done** |
-| 5 | HybridAnd authorization | Pending |
+| 5 | HybridAnd authorization | **Done** |
 | 6 | Replay protection + expiry | Pending |
 | 7 | Hybrid-authorized SOL transfer | Pending |
 | 8 | CU + transaction-size benchmarks | Pending |
@@ -301,7 +301,7 @@ message telling you to.
 ## Test instructions
 
 ```bash
-# Everything (122 tests as of Milestone 4; needs the .so built first)
+# Everything (135 tests as of Milestone 5; needs the .so built first)
 cargo test --workspace
 
 # Shared types, layout, canonical encoding
@@ -318,6 +318,9 @@ cargo test -p dualkey-client --release --test sbf_initialize -- --nocapture
 
 # On-chain intent reconstruction (Milestone 4)
 cargo test -p dualkey-client --release --test sbf_reconstruct -- --nocapture
+
+# HybridAnd authorization (Milestone 5; needs mollusk precompiles feature)
+cargo test -p dualkey-client --release --test sbf_hybrid -- --nocapture
 
 # Signature length distribution soak (10,000 signatures)
 cargo test -p dualkey-client --release --test falcon_interop -- --ignored --nocapture
@@ -340,6 +343,7 @@ Test groups (all under `client/tests/`):
 | `sbf_falcon.rs` | SBF (M2) | Falcon verify + `sol_sha256` inside the SBF VM; malformed input; CU |
 | `sbf_initialize.rs` | SBF (M3) | HybridAccount PDA creation, on-chain Falcon key preparation, rejection paths, CU and rent |
 | `sbf_reconstruct.rs` | SBF (M4) | Intent reconstruction from trusted context + 49-byte wire; digest match; wrong context fails |
+| `sbf_hybrid.rs` | SBF (M5) | HybridAnd / Ed25519Only / FalconOnly; no single-scheme fallback; precompile binding |
 
 The SBF tests live in `client/tests/` rather than `program/tests/` on purpose:
 it keeps every Falcon **signer** out of the program package's dependency graph,
