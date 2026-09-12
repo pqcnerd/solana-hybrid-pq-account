@@ -46,10 +46,33 @@ impl AuthorizationPolicy {
     /// Unreachable modes must return [`crate::DualKeyError::PolicyNotImplemented`]
     /// rather than silently falling back.
     pub const fn is_implemented(self) -> bool {
-        matches!(
-            self,
-            Self::Ed25519Only | Self::FalconOnly | Self::HybridAnd
-        )
+        matches!(self, Self::Ed25519Only | Self::FalconOnly | Self::HybridAnd)
+    }
+
+    /// Stable kebab-case name, used by the CLI and in reports.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Ed25519Only => "ed25519-only",
+            Self::FalconOnly => "falcon-only",
+            Self::HybridAnd => "hybrid-and",
+            Self::HybridOr => "hybrid-or",
+            Self::FalconForPrivileged => "falcon-for-privileged",
+            Self::FalconAboveThreshold => "falcon-above-threshold",
+        }
+    }
+
+    /// Parse a [`AuthorizationPolicy::name`].
+    pub fn from_name(name: &str) -> Option<Self> {
+        [
+            Self::Ed25519Only,
+            Self::FalconOnly,
+            Self::HybridAnd,
+            Self::HybridOr,
+            Self::FalconForPrivileged,
+            Self::FalconAboveThreshold,
+        ]
+        .into_iter()
+        .find(|p| p.name() == name)
     }
 }
 

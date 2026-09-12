@@ -33,7 +33,7 @@
 
 use dualkey_core::{FALCON_SIGNATURE_LEN, FALCON_WIRE_PUBKEY_LEN};
 use pqcrypto_falcon::falcon512;
-use pqcrypto_traits::sign::{DetachedSignature as _, VerificationError};
+use pqcrypto_traits::sign::{DetachedSignature as _, PublicKey as _, VerificationError};
 use solana_falcon512::{
     Falcon512PreparedPubkey, Falcon512Pubkey, Falcon512Signature, FALCON_512_PREPARED_PUBKEY_LEN,
     FALCON_512_PUBKEY_LEN, FALCON_512_SIGNATURE_LEN,
@@ -103,8 +103,16 @@ impl WireSignature {
 
     /// Reconstruct from an already-padded 666-byte buffer.
     ///
-    /// `encoded_len` is recovered as the length after stripping trailing
-    /// zeros, which is exactly what `solana-falcon512` treats as padding.
+    /// `encoded_len` is recovered by stripping trailing zeros, which is exactly
+    /// what both verifiers treat as padding. This is sound for valid PQClean
+    /// signatures because the final byte of a `comp_encode` output always
+    /// carries the last coefficient's unary terminator bit and is therefore
+    /// never zero (pinned by `last_byte_of_compressed_signature_is_never_zero`).
+    ///
+    /// The recovered length is only used for reporting and for
+    /// [`WireSignature::to_pqclean`]. Verification never depends on it: both
+    /// [`verify_pqclean_wire`] and the `solana-falcon512` paths operate on all
+    /// 666 bytes.
     pub fn from_wire_bytes(bytes: &[u8]) -> Result<Self> {
         if bytes.len() != FALCON_SIGNATURE_LEN {
             return Err(ClientError::FalconKey(
@@ -166,6 +174,38 @@ pub fn verify_pqclean(
     )
 }
 
+/// Verify the **666-byte padded wire form** with PQClean, so PQClean and the
+/// on-chain verifier are checked against byte-for-byte identical input.
+///
+/// PQClean's `do_verify` accepts a `sigbuflen` of 625 (`666 - 40 - 1`, the
+/// padded-format size) provided every byte past the compressed encoding is
+/// zero, so no length recovery is needed:
+///
+/// ```c
+/// if (v != sigbuflen) {
+///     if (sigbuflen == FALCONPADDED512_CRYPTO_BYTES - NONCELEN - 1) {  // 625
+///         while (v < sigbuflen) { if (sigbuf[v++] != 0) return -1; }
+///     } else { return -1; }
+/// }
+/// ```
+///
+/// Prefer this over reconstructing a variable-length signature: it removes any
+/// dependence on stripping trailing zeros to recover the encoded length.
+pub fn verify_pqclean_wire(
+    wire_signature: &WireSignature,
+    message: &[u8],
+    pubkey_wire: &[u8],
+) -> bool {
+    let Ok(public_key) = falcon512::PublicKey::from_bytes(pubkey_wire) else {
+        return false;
+    };
+    let Ok(signature) = falcon512::DetachedSignature::from_bytes(wire_signature.as_wire_bytes())
+    else {
+        return false;
+    };
+    verify_pqclean(&signature, message, &public_key)
+}
+
 /// Map a PQClean verification result to an explicit error, for diagnostics.
 pub fn verify_pqclean_detailed(
     signature: &falcon512::DetachedSignature,
@@ -178,7 +218,11 @@ pub fn verify_pqclean_detailed(
 /// Verify with the on-chain verifier using a raw 897-byte wire public key.
 ///
 /// Never panics: malformed input returns `false`.
-pub fn verify_solana_raw(wire_signature: &WireSignature, message: &[u8], pubkey_wire: &[u8]) -> bool {
+pub fn verify_solana_raw(
+    wire_signature: &WireSignature,
+    message: &[u8],
+    pubkey_wire: &[u8],
+) -> bool {
     let Ok(pubkey) = Falcon512Pubkey::try_from_slice(pubkey_wire) else {
         return false;
     };

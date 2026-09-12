@@ -39,6 +39,16 @@ pub enum DualKeyError {
     MathOverflow = 14,
     /// Insufficient lamports for the requested transfer.
     InsufficientFunds = 15,
+    /// Instruction data length or framing is invalid.
+    MalformedInstructionData = 16,
+    /// Recomputed canonical digest does not match the expected digest.
+    DigestMismatch = 17,
+    /// A required signature is missing from the transaction.
+    MissingSigner = 18,
+    /// The target account already holds data; refusing to re-initialize.
+    AccountAlreadyInitialized = 19,
+    /// A required program account (e.g. the System program) is not the expected one.
+    InvalidProgramAccount = 20,
 }
 
 impl DualKeyError {
@@ -67,6 +77,11 @@ impl core::fmt::Display for DualKeyError {
             Self::PolicyNotImplemented => write!(f, "policy not implemented"),
             Self::MathOverflow => write!(f, "math overflow"),
             Self::InsufficientFunds => write!(f, "insufficient funds"),
+            Self::MalformedInstructionData => write!(f, "malformed instruction data"),
+            Self::DigestMismatch => write!(f, "canonical digest mismatch"),
+            Self::MissingSigner => write!(f, "missing required signature"),
+            Self::AccountAlreadyInitialized => write!(f, "account already initialized"),
+            Self::InvalidProgramAccount => write!(f, "invalid program account"),
         }
     }
 }

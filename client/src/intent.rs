@@ -38,12 +38,10 @@ fn default_version() -> u8 {
 
 fn hex32(field: &'static str, value: &str) -> Result<[u8; 32]> {
     let bytes = hex::decode(value).map_err(|source| ClientError::Hex { field, source })?;
-    bytes
-        .try_into()
-        .map_err(|_| ClientError::IntentFormat {
-            path: field.to_string(),
-            reason: format!("{field} must be exactly 32 bytes (64 hex chars)"),
-        })
+    bytes.try_into().map_err(|_| ClientError::IntentFormat {
+        path: field.to_string(),
+        reason: format!("{field} must be exactly 32 bytes (64 hex chars)"),
+    })
 }
 
 impl IntentSpec {

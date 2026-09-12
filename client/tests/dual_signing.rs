@@ -179,7 +179,10 @@ fn client_sha256_agrees_with_core_test_vectors() {
     assert_eq!(independent, dualkey_core::TEST_VECTOR_DIGEST);
 
     // And the client signing path uses exactly that digest.
-    assert_eq!(signing_material(intent).digest, dualkey_core::TEST_VECTOR_DIGEST);
+    assert_eq!(
+        signing_material(intent).digest,
+        dualkey_core::TEST_VECTOR_DIGEST
+    );
 }
 
 #[test]
@@ -211,9 +214,7 @@ fn signed_bundle_contains_no_secret_material() {
 
     let json = serde_json::to_string(&bundle).unwrap();
     let ed_secret = hex::encode(ed.signing_key().to_bytes());
-    let falcon_secret = hex::encode(
-        pqcrypto_traits::sign::SecretKey::as_bytes(falcon.secret()),
-    );
+    let falcon_secret = hex::encode(pqcrypto_traits::sign::SecretKey::as_bytes(falcon.secret()));
 
     assert!(
         !json.contains(&ed_secret),

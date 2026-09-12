@@ -16,7 +16,7 @@ with an authorization-policy engine.
 | Shared types | `core/` (`dualkey-core`) | Intent, policy, fixed account layout, canonical constants |
 | On-chain program | `program/` (`dualkey-program`) | PDA, auth, nonce/expiry, action execution |
 | Off-chain client | `client/` (`dualkey` CLI) | Keygen, signing, submission |
-| Test / bench | `program/tests`, `program/benches` | LiteSVM attack tests; Mollusk CU benches |
+| Test / bench | `client/tests` | Host tests; Mollusk SBF attack tests and CU benches against the compiled `.so`. Kept out of `program/` so no Falcon signer enters the program's dependency graph, even as a dev-dependency. |
 
 UI / wallet frontend code is intentionally excluded from this repository.
 
@@ -46,7 +46,10 @@ Falcon private key              │
 
 - Pure Rust, `no_std`, allocation-free, optimised for Solana SBF.
 - Compressed Falcon-512 signatures only (header `0x39`).
-- Prepared pubkey path: ~173–183k CU; raw pubkey: ~270k CU.
+- Prepared pubkey path: **~172.6–193.4k CU**, raw pubkey **~224.6–245.4k CU**,
+  measured in DualKey's own program frame over a 32-byte digest
+  ([`milestone-2.md`](milestone-2.md)). Upstream reports ~173–183k and ~270k.
+  Ranges, not points: cost is stochastic (see below).
 - Prepared form is **1024 bytes** (NTT coefficients as `u16`, with `N⁻¹` pre-folded).
 - Verify only — never keygen or sign on-chain.
 - **Not audited.** Research use; do not treat as production-ready.
@@ -145,15 +148,32 @@ Offset 96 is 8-byte aligned so
 
 ### Prepared vs raw Falcon pubkey
 
-| Approach | Storage | Verify CU (upstream) |
-|----------|--------:|---------------------:|
-| Raw wire pubkey in every tx | 897 B on wire | ~270k |
-| Prepared in account | 1024 B in PDA | ~173–183k |
+| Approach | Storage | Verify CU (measured, 32-byte digest) | Upstream |
+|----------|--------:|------------------------------------:|---------:|
+| Raw wire pubkey in every tx | 897 B on wire | 224.6k – 245.4k | ~270k |
+| Prepared in account | 1024 B in PDA | 172.6k – 193.4k | ~173–183k |
 
 Prepared storage is **required for DualKey**: a raw 897-byte pubkey plus
 666-byte signature cannot fit a normal transaction alongside Ed25519
 precompile data. Initialization prepares once (`try_prepare_pubkey`); every
 later verify uses `verify_with_prepared`.
+
+The per-verification saving is **exactly 51,991 CU**, measured and deterministic
+(both paths differ only by the wire decode plus forward NTT). This is not the
+~99k figure recorded in Milestone 0. Milestone 2 guessed that ~99k described the
+one-time `try_prepare_pubkey` cost instead; Milestone 3 measured that cost
+directly and it is **52,410 CU**, so ~99k matches neither quantity and is simply
+not reproducible here.
+
+Those two measurements are near-identical for a good reason: preparing a key
+*is* the work the raw path repeats on every verify. Paying 52,410 CU once at
+`Initialize` therefore saves 51,991 CU on every subsequent verification — the
+prepared-key design breaks even after a single authorization and wins from the
+second onward.
+
+Absolute cost moves in ~10,150 CU steps (one Keccak-f permutation) and varies per
+signature because `hash_to_point` rejection-samples, so it must be quoted as a
+range; see [`milestone-2.md`](milestone-2.md).
 
 ## Transaction size budget
 

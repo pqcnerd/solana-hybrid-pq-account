@@ -26,6 +26,30 @@ use crate::policy::AuthorizationPolicy;
 /// PDA seed prefix: `["dualkey", creator, account_index_le]`.
 pub const PDA_SEED: &[u8] = b"dualkey";
 
+/// Width of the `account_index` seed (u32 little-endian).
+pub const ACCOUNT_INDEX_LEN: usize = 4;
+
+/// Number of seeds before the bump.
+pub const PDA_SEED_COUNT: usize = 3;
+
+/// Build the PDA seed list, without the bump.
+///
+/// The seeds are deliberately **not** derived from any key material. Deriving
+/// the address from the Ed25519 or Falcon public key would make the address
+/// change when a key rotates, stranding any funds at the old address. Keying on
+/// `(creator, account_index)` instead keeps the address stable across the key
+/// rotation that Milestone 9 introduces.
+///
+/// Both the on-chain program and the off-chain client call this, so the two can
+/// never disagree on seed order or encoding. Callers append `&[bump]` to obtain
+/// the full signer seeds.
+pub fn pda_seeds<'a>(
+    creator: &'a [u8; 32],
+    account_index_le: &'a [u8; ACCOUNT_INDEX_LEN],
+) -> [&'a [u8]; PDA_SEED_COUNT] {
+    [PDA_SEED, creator.as_slice(), account_index_le.as_slice()]
+}
+
 /// On-chain account data length.
 pub const ACCOUNT_DATA_LEN: usize = 1120;
 
@@ -76,7 +100,7 @@ const _: () = assert!(
 /// least 2-byte alignment. Solana account data is 8-byte aligned by ABI, so an
 /// 8-byte-aligned offset always satisfies it.
 const _: () = assert!(
-    offsets::PREPARED_FALCON_PUBLIC_KEY % 8 == 0,
+    offsets::PREPARED_FALCON_PUBLIC_KEY.is_multiple_of(8),
     "prepared Falcon pubkey offset must be 8-byte aligned for zero-copy borrow"
 );
 
@@ -244,13 +268,20 @@ impl<'a> HybridAccount<'a> {
             .expect("layout guarantees 1024 bytes")
     }
 
-    /// Initialize a fresh account buffer (caller must zero or provide empty data).
-    pub fn initialize(
+    /// Initialize every field **except** the prepared Falcon public key, whose
+    /// region is left zeroed for the caller to fill in place.
+    ///
+    /// The on-chain program uses this rather than [`HybridAccount::initialize`]
+    /// so the 1024-byte prepared key is never materialized in the calling stack
+    /// frame: SBF allows only 4 KB per frame, and `try_prepare_pubkey` returns
+    /// the key by value. The caller writes it straight into
+    /// [`HybridAccount::prepared_falcon_public_key_mut`] from a separate,
+    /// `#[inline(never)]` frame.
+    pub fn initialize_without_falcon_key(
         data: &'a mut [u8],
         bump: u8,
         owner_ed25519: &[u8; 32],
         falcon_public_key_hash: &[u8; 32],
-        prepared_falcon_public_key: &[u8; PREPARED_FALCON_PUBKEY_LEN],
         policy: AuthorizationPolicy,
     ) -> Result<Self, DualKeyError> {
         if data.len() != ACCOUNT_DATA_LEN {
@@ -264,6 +295,25 @@ impl<'a> HybridAccount<'a> {
         account.set_owner_ed25519(owner_ed25519);
         account.set_falcon_public_key_hash(falcon_public_key_hash);
         account.set_nonce(0);
+        Ok(account)
+    }
+
+    /// Initialize a fresh account buffer (caller must zero or provide empty data).
+    pub fn initialize(
+        data: &'a mut [u8],
+        bump: u8,
+        owner_ed25519: &[u8; 32],
+        falcon_public_key_hash: &[u8; 32],
+        prepared_falcon_public_key: &[u8; PREPARED_FALCON_PUBKEY_LEN],
+        policy: AuthorizationPolicy,
+    ) -> Result<Self, DualKeyError> {
+        let mut account = Self::initialize_without_falcon_key(
+            data,
+            bump,
+            owner_ed25519,
+            falcon_public_key_hash,
+            policy,
+        )?;
         account
             .prepared_falcon_public_key_mut()
             .copy_from_slice(prepared_falcon_public_key);

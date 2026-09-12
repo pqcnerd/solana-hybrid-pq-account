@@ -63,7 +63,10 @@ fn pqclean_signatures_are_variable_length_and_fit_the_wire_buffer() {
 
     println!("PQClean signature length over 200 signings: min={min} max={max} over_666={over}");
 
-    assert!(min < max, "Falcon signing is randomized; lengths should vary");
+    assert!(
+        min < max,
+        "Falcon signing is randomized; lengths should vary"
+    );
     assert!(
         max <= 666,
         "observed a {max}-byte signature, exceeding the 666-byte on-chain buffer"
@@ -200,7 +203,10 @@ fn signature_length_distribution_soak() {
         println!("  {len:>4} bytes : {count:>6}  ({pct:5.2}%)");
     }
 
-    assert_eq!(over, 0, "{over}/{total} signatures exceeded the 666-byte buffer");
+    assert_eq!(
+        over, 0,
+        "{over}/{total} signatures exceeded the 666-byte buffer"
+    );
 }
 
 #[test]

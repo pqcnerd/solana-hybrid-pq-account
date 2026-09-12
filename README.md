@@ -75,7 +75,7 @@ Four layers (details in [`docs/architecture.md`](docs/architecture.md)):
 | Shared core | [`core/`](core/) | Intent, policy, fixed account layout, canonical constants |
 | On-chain program | [`program/`](program/) | PDA vault, auth, nonce/expiry, actions |
 | Off-chain client | [`client/`](client/) | Keygen, dual signing, submission |
-| Tests / benches | `program/tests`, `program/benches` | Attack tests (LiteSVM), CU benches (Mollusk) |
+| Tests / benches | `client/tests` | Host tests, plus SBF attack tests and CU benches (Mollusk) against the compiled `.so` |
 
 **Crypto (selected):**
 
@@ -120,19 +120,25 @@ tight legacy transaction size budgets.
 
 ## Project status
 
-**Milestone 1 — complete (host-side CLI + Falcon interoperability gate passed).**
+**Milestone 2 — complete (Falcon-512 verification runs under Solana SBF).**
 
 A PQClean-produced Falcon-512 signature verifies **directly** under the
 on-chain verifier `solana-falcon512`, with right-zero-padding to 666 bytes as
-the only adaptation. Full findings:
-[`docs/falcon-interop.md`](docs/falcon-interop.md).
+the only adaptation ([`docs/falcon-interop.md`](docs/falcon-interop.md)) — and
+that verification now executes inside the SBF virtual machine against the
+compiled `.so`, at 172.6k–193.4k CU for a 32-byte digest. The on-chain
+`sol_sha256` digest reproduces the client's `sha2` digest bit-for-bit.
+Full findings: [`docs/milestone-2.md`](docs/milestone-2.md).
+
+There is still **no vault**: no PDA, no authorization policy, and no lamport
+movement. The account instructions return `Unimplemented`.
 
 | Milestone | Description | Status |
 |----------:|-------------|--------|
 | 0 | Scaffolding, README, architecture, threat model, benchmark plan | **Done** |
 | 1 | Off-chain CLI: Falcon + Ed25519 keygen/sign/verify same digest | **Done** |
-| 2 | Falcon verify under SBF (minimal program) | Next |
-| 3 | HybridAccount PDA (no transfers yet) | Pending |
+| 2 | Falcon verify under SBF (minimal program) | **Done** |
+| 3 | HybridAccount PDA (no transfers yet) | **Done** |
 | 4 | Canonical intent encoding (core encoding landed early in M1) | Partial |
 | 5 | HybridAnd authorization | Pending |
 | 6 | Replay protection + expiry | Pending |
@@ -280,7 +286,7 @@ This also demonstrates the HybridAnd property directly: flipping one bit of
 the Falcon signature yields `Ed25519 VALID` but `Falcon INVALID`, and the
 overall result is rejection.
 
-### SBF / on-chain (Milestone 2+)
+### SBF / on-chain
 
 After `./scripts/setup-toolchain.sh`:
 
@@ -288,10 +294,14 @@ After `./scripts/setup-toolchain.sh`:
 cargo-build-sbf --manifest-path program/Cargo.toml
 ```
 
+This writes `target/deploy/dualkey_program.so`, which the SBF tests load. Build
+it before running `cargo test --workspace`, or those tests will fail with a
+message telling you to.
+
 ## Test instructions
 
 ```bash
-# Everything (55 tests as of Milestone 1)
+# Everything (99 tests as of Milestone 3; needs the .so built first)
 cargo test --workspace
 
 # Shared types, layout, canonical encoding
@@ -300,11 +310,20 @@ cargo test -p dualkey-core
 # Falcon interoperability gate
 cargo test -p dualkey-client --test falcon_interop -- --nocapture
 
+# Falcon verification inside the SBF VM (Mollusk)
+cargo test -p dualkey-client --release --test sbf_falcon -- --nocapture
+
+# HybridAccount PDA initialization, with CU and rent figures
+cargo test -p dualkey-client --release --test sbf_initialize -- --nocapture
+
 # Signature length distribution soak (10,000 signatures)
 cargo test -p dualkey-client --release --test falcon_interop -- --ignored --nocapture
+
+# Compute-unit profile by message length
+cargo test -p dualkey-client --release --test sbf_falcon -- --ignored --nocapture
 ```
 
-Milestone 1 host test groups (under `client/tests/`):
+Test groups (all under `client/tests/`):
 
 | File | Group | Covers |
 |------|-------|--------|
@@ -314,8 +333,16 @@ Milestone 1 host test groups (under `client/tests/`):
 | `signature_mutation.rs` | C | Signature bit flips, malformed/oversized input, no panics |
 | `wrong_keys.rs` | D | Wrong public keys, tampered intents, per-scheme independence |
 | `file_safety.rs` | E | `0600` modes, no secrets in output/errors/on-chain data |
+| `encoding_review.rs` | Review | Compressed-encoding invariants; PQClean accepts the padded 666-byte form |
+| `sbf_falcon.rs` | SBF (M2) | Falcon verify + `sol_sha256` inside the SBF VM; malformed input; CU |
+| `sbf_initialize.rs` | SBF (M3) | HybridAccount PDA creation, on-chain Falcon key preparation, rejection paths, CU and rent |
 
-Planned on-chain attack/integration tests (under `program/tests/`, Milestone 5+):  
+The SBF tests live in `client/tests/` rather than `program/tests/` on purpose:
+it keeps every Falcon **signer** out of the program package's dependency graph,
+even as a dev-dependency, and makes each test a genuine cross-layer check —
+the client signs with PQClean, the program verifies with `solana-falcon512`.
+
+Planned on-chain attack/integration tests (Milestone 5+):  
 `valid_hybrid_signature`, `invalid_ed25519`, `invalid_falcon`, `replay_attack`,
 `expired_intent`, `altered_message`, `wrong_program`, `wrong_vault`,
 `key_rotation`.
@@ -324,12 +351,27 @@ Planned on-chain attack/integration tests (under `program/tests/`, Milestone 5+)
 
 Plan: [`docs/benchmark-plan.md`](docs/benchmark-plan.md).
 
-Upstream Falcon verify baselines (`solana-falcon512`):
+Falcon verify cost, **measured under SBF** in Milestone 2 (Mollusk 0.15.1
+against the compiled `.so`, 32-byte digest) — see
+[`docs/milestone-2.md`](docs/milestone-2.md):
 
-| Path | CU |
-|------|---:|
-| Prepared pubkey verify | ~173k–183k |
-| Raw pubkey verify | ~270k |
+| Path | Measured | Upstream |
+|------|---------:|---------:|
+| Prepared pubkey verify | 172.6k – 193.4k CU | ~173k–183k |
+| Raw pubkey verify | 224.6k – 245.4k CU | ~270k |
+| Prepared-vs-raw saving | **51,991 CU** (deterministic) | ~99k |
+| Canonical digest via `sol_sha256` | 417 CU | — |
+| `Initialize` (Milestone 3) | **60,854 CU** (deterministic) | — |
+| ↳ one-time `try_prepare_pubkey` | **52,410 CU** (deterministic) | ~99k |
+
+Absolute cost is quantized in ~10,150 CU steps (one Keccak-f permutation) and
+varies per signature because `hash_to_point` rejection-samples, so it is quoted
+as a range. The prepared-vs-raw *difference* is deterministic, since the two
+paths differ only by the wire-key decode and forward NTT.
+
+Preparing the key costs almost exactly what one raw verify wastes (52,410 vs
+51,991 CU), because preparing *is* the work the raw path repeats each time. So
+storing the prepared key breaks even after a single authorization.
 
 Measured in Milestone 1 (host, 10,000 signatures) — see
 [`docs/falcon-interop.md`](docs/falcon-interop.md):
@@ -371,6 +413,7 @@ Research questions guiding the work:
 - [`docs/architecture.md`](docs/architecture.md) — layers, PDA, layout, deps  
 - [`docs/canonical-intent.md`](docs/canonical-intent.md) — signing encoding  
 - [`docs/falcon-interop.md`](docs/falcon-interop.md) — PQClean ↔ on-chain Falcon encoding findings  
+- [`docs/milestone-2.md`](docs/milestone-2.md) — Falcon under SBF: measured CU, resolved open questions  
 - [`docs/threat-model.md`](docs/threat-model.md) — adversaries and invariants  
 - [`docs/benchmark-plan.md`](docs/benchmark-plan.md) — measurement plan  
 

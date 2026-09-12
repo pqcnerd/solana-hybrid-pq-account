@@ -12,6 +12,7 @@ pub mod falcon_interop;
 pub mod intent;
 pub mod keygen;
 pub mod keys;
+pub mod onchain;
 pub mod sign;
 pub mod submit;
 

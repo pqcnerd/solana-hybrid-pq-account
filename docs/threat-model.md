@@ -90,7 +90,7 @@ This document does **not** claim formal security or quantum-proofness.
 
 | Threat | Mitigation |
 |--------|------------|
-| DoS via expensive Falcon verify | CU budget ~195k for prepared path; reject malformed early where possible; prepared pubkey avoids +99k decode |
+| DoS via expensive Falcon verify | Measured 172.6k–193.4k CU for the prepared path over a 32-byte digest (~173.0k when the signature is invalid, so rejection is no cheaper than success), inside the ~195k budget; malformed lengths are rejected before any crypto runs; the prepared pubkey avoids 51,991 CU of wire decode per verify |
 | Transaction size exhaustion | Reconstruct intent on-chain; store prepared pubkey in PDA; measure vs 1232 B |
 
 ### Relayer

@@ -1,11 +1,11 @@
 //! GROUP E (file safety): private-key files must be mode 0600 on Unix, and no
 //! CLI/report output may contain secret-key bytes.
 
+use dualkey_client::keygen;
 use dualkey_client::keys::{
     self, Ed25519Keypair, FalconKeypair, KeyPaths, KeySet, ED25519_ID_FILE, ED25519_PK_FILE,
     ED25519_SK_FILE, FALCON_PK_FILE, FALCON_PREPARED_FILE, FALCON_SK_FILE, SECRET_FILES,
 };
-use dualkey_client::keygen;
 use pqcrypto_traits::sign::SecretKey as _;
 
 #[test]
@@ -21,10 +21,7 @@ fn private_key_files_have_mode_0600() {
         (FALCON_SK_FILE, paths.falcon_sk()),
     ] {
         let mode = keys::file_mode(&path).expect("mode");
-        assert_eq!(
-            mode, 0o600,
-            "{name} must be mode 0600, found {mode:o}"
-        );
+        assert_eq!(mode, 0o600, "{name} must be mode 0600, found {mode:o}");
     }
 
     // The declared secret-file list must cover exactly what we checked.
@@ -102,6 +99,55 @@ fn prepared_account_data_contains_no_secret_material() {
     }
 }
 
+/// The `Initialize` instruction is the first thing DualKey sends on-chain, so it
+/// is the most consequential place for a leak. It must carry both public keys and
+/// no byte of either secret key.
+#[test]
+fn initialize_instruction_contains_no_secret_material() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    keygen::generate(dir.path()).expect("keygen");
+    let paths = KeyPaths::new(dir.path());
+
+    let public = keys::PublicKeys::load(&paths).expect("load public keys");
+    let data = dualkey_client::onchain::initialize_data(
+        0,
+        public.ed25519(),
+        dualkey_core::AuthorizationPolicy::HybridAnd,
+        public.falcon_wire(),
+    )
+    .expect("build instruction data");
+
+    // Both public keys must be present, or the program could not store them.
+    assert!(
+        data.windows(32).any(|w| w == public.ed25519()),
+        "Ed25519 owner public key must be in the instruction"
+    );
+    assert!(
+        data.windows(public.falcon_wire().len())
+            .any(|w| w == public.falcon_wire()),
+        "Falcon wire public key must be in the instruction"
+    );
+
+    // Neither secret key may appear, in whole or in part.
+    let falcon_secret = FalconKeypair::load(&paths)
+        .expect("load falcon")
+        .secret()
+        .as_bytes()
+        .to_vec();
+    let ed_secret = std::fs::read(paths.ed25519_sk()).expect("read ed25519 sk");
+    for (name, secret) in [
+        (FALCON_SK_FILE, falcon_secret.as_slice()),
+        (ED25519_SK_FILE, ed_secret.as_slice()),
+    ] {
+        for window in secret.windows(16) {
+            assert!(
+                !data.windows(16).any(|w| w == window),
+                "Initialize instruction contains {name} material"
+            );
+        }
+    }
+}
+
 #[test]
 fn keygen_report_output_contains_no_secret_bytes() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -176,7 +222,7 @@ fn error_messages_contain_no_secret_material() {
     // error text reports only lengths and paths.
     let bad = dir.path().join("bad-keys");
     std::fs::create_dir_all(&bad).unwrap();
-    std::fs::write(bad.join("falcon512.sk"), &[0u8; 10]).unwrap();
+    std::fs::write(bad.join("falcon512.sk"), [0u8; 10]).unwrap();
     std::fs::write(bad.join("falcon512.pk"), [0u8; 897]).unwrap();
 
     // `FalconKeypair` deliberately has no `Debug` impl, so `unwrap_err` is not

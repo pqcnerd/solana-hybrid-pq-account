@@ -1,8 +1,14 @@
 [toolchain]
-channel = "1.85.0"
+# Must be >= 1.89.0: the resolved Solana crates in Cargo.lock
+# (solana-pubkey 4.x, solana-hash 4.x, solana-address 2.x) declare
+# rust-version = "1.89.0". Pinning 1.85.0 made the workspace unbuildable
+# under rustup. Verified against Cargo.lock with `cargo clippy --workspace`.
+channel = "1.93.0"
 components = ["rustfmt", "clippy"]
 profile = "minimal"
 
 # The Agave/Solana SBF platform toolchain is installed separately via
 # scripts/setup-toolchain.sh (cargo-build-sbf). Do not add the Solana
 # platform-tools target here; it is managed by the Solana CLI install.
+# cargo-build-sbf uses its own bundled platform-tools rustc for the
+# sbpf-solana-solana target and ignores this channel.

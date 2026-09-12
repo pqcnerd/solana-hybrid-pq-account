@@ -54,6 +54,21 @@ pub enum ClientError {
 
     #[error("verification failed: {0}")]
     VerificationFailed(String),
+
+    #[error("{field} must be a base58 Solana address")]
+    InvalidAddress { field: &'static str },
+
+    /// Statistically improbable: no bump seed yields an off-curve address.
+    #[error("could not derive a HybridAccount program address for these seeds")]
+    PdaDerivation,
+
+    /// The program refuses to store a policy it cannot evaluate, so the client
+    /// rejects it before building the instruction.
+    #[error(
+        "authorization policy {policy} is declared but not implemented; \
+         the program would reject it"
+    )]
+    PolicyNotImplemented { policy: u8 },
 }
 
 pub type Result<T> = std::result::Result<T, ClientError>;

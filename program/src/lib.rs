@@ -1,8 +1,19 @@
 //! DualKey Solana program.
 //!
-//! Milestone 0: scaffolding only. All instructions return
-//! [`dualkey_core::DualKeyError::Unimplemented`]. Cryptographic verification
-//! is wired as dependencies and module stubs but is not invoked yet.
+//! Milestone 2 brought real Falcon-512 verification and the `sol_sha256`
+//! canonical digest under SBF, via the verification-harness instructions
+//! (discriminators 240–242).
+//!
+//! Milestone 3 adds `Initialize`, which creates the HybridAccount PDA holding
+//! the Ed25519 owner key, the prepared Falcon public key, a nonce and a policy.
+//! It still moves no value: the only lamport flow is rent funding for the new
+//! account. `Execute` and the rotation instructions remain
+//! [`dualkey_core::DualKeyError::Unimplemented`], so a HybridAccount cannot yet
+//! authorize anything.
+//!
+//! Falcon key generation and Falcon signing never happen here; this crate
+//! contains verification only, and `pqcrypto-falcon` is absent from its
+//! dependency graph.
 
 use solana_account_info::AccountInfo;
 use solana_program_entrypoint::entrypoint;
@@ -10,7 +21,10 @@ use solana_pubkey::Pubkey;
 
 pub mod auth;
 pub mod error;
+pub mod hash;
+pub mod initialize;
 pub mod instruction;
+pub mod pda;
 pub mod processor;
 
 pub use error::to_program_error;

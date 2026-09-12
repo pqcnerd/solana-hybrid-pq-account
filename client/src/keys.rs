@@ -248,6 +248,45 @@ impl FalconKeypair {
     }
 }
 
+/// Public key material only, loaded without opening any secret key file.
+///
+/// Building on-chain instructions needs the Ed25519 owner key and the Falcon
+/// wire public key and nothing else. Loading through this type rather than
+/// [`Ed25519Keypair::load`] / [`FalconKeypair::load`] means the `Initialize`
+/// path never reads, and so can never leak, secret bytes.
+#[derive(Clone)]
+pub struct PublicKeys {
+    ed25519: [u8; 32],
+    falcon_wire: Vec<u8>,
+}
+
+impl PublicKeys {
+    pub fn load(paths: &KeyPaths) -> Result<Self> {
+        let ed = read_exact_len(&paths.ed25519_pk(), 32)?;
+        let falcon_wire = read_exact_len(&paths.falcon_pk(), falcon512::public_key_bytes())?;
+        let ed25519: [u8; 32] = ed
+            .try_into()
+            .map_err(|_| ClientError::Ed25519Key("public key must be 32 bytes"))?;
+        Ok(Self {
+            ed25519,
+            falcon_wire,
+        })
+    }
+
+    pub fn ed25519(&self) -> &[u8; 32] {
+        &self.ed25519
+    }
+
+    pub fn falcon_wire(&self) -> &[u8] {
+        &self.falcon_wire
+    }
+
+    /// SHA-256 of the Falcon wire public key, as stored in account data.
+    pub fn falcon_public_key_hash(&self) -> [u8; 32] {
+        sha256(&self.falcon_wire)
+    }
+}
+
 /// Public key manifest. Contains no secret material.
 #[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub struct KeySet {

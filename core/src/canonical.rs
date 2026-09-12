@@ -117,8 +117,25 @@ pub fn canonical_digest(intent: &AuthorizationIntent) -> [u8; DIGEST_LEN] {
 /// First 19 bytes of the [`test_vector_intent`] preimage: the length-prefixed
 /// domain tag followed by the intent version.
 pub const TEST_VECTOR_PREIMAGE_PREFIX: [u8; 19] = [
-    0x11, b'D', b'U', b'A', b'L', b'K', b'E', b'Y', b'_', b'S', b'O', b'L', b'A', b'N', b'A', b'_',
-    b'V', b'1', INTENT_VERSION,
+    0x11,
+    b'D',
+    b'U',
+    b'A',
+    b'L',
+    b'K',
+    b'E',
+    b'Y',
+    b'_',
+    b'S',
+    b'O',
+    b'L',
+    b'A',
+    b'N',
+    b'A',
+    b'_',
+    b'V',
+    b'1',
+    INTENT_VERSION,
 ];
 
 /// SHA-256 of the full 172-byte [`test_vector_intent`] preimage.
@@ -164,7 +181,10 @@ mod tests {
             CANONICAL_PREIMAGE_LEN,
             1 + DOMAIN_TAG_LEN + 1 + 32 + 32 + 32 + 8 + 8 + 1 + ACTION_BODY_LEN
         );
-        assert_eq!(offsets::ACTION_BODY + ACTION_BODY_LEN, CANONICAL_PREIMAGE_LEN);
+        assert_eq!(
+            offsets::ACTION_BODY + ACTION_BODY_LEN,
+            CANONICAL_PREIMAGE_LEN
+        );
     }
 
     #[test]
@@ -180,19 +200,28 @@ mod tests {
         let p = canonical_preimage(&intent);
 
         assert_eq!(p[offsets::VERSION], INTENT_VERSION);
-        assert_eq!(&p[offsets::CHAIN_DOMAIN..offsets::CHAIN_DOMAIN + 32], &[0x11; 32]);
-        assert_eq!(&p[offsets::PROGRAM_ID..offsets::PROGRAM_ID + 32], &[0x22; 32]);
-        assert_eq!(&p[offsets::ACCOUNT..offsets::ACCOUNT + 32], &[0x33; 32]);
         assert_eq!(
-            &p[offsets::NONCE..offsets::NONCE + 8],
-            &7u64.to_le_bytes()
+            &p[offsets::CHAIN_DOMAIN..offsets::CHAIN_DOMAIN + 32],
+            &[0x11; 32]
         );
+        assert_eq!(
+            &p[offsets::PROGRAM_ID..offsets::PROGRAM_ID + 32],
+            &[0x22; 32]
+        );
+        assert_eq!(&p[offsets::ACCOUNT..offsets::ACCOUNT + 32], &[0x33; 32]);
+        assert_eq!(&p[offsets::NONCE..offsets::NONCE + 8], &7u64.to_le_bytes());
         assert_eq!(
             &p[offsets::EXPIRY_SLOT..offsets::EXPIRY_SLOT + 8],
             &1_234_567u64.to_le_bytes()
         );
-        assert_eq!(p[offsets::ACTION_TAG], crate::intent::ACTION_TAG_TRANSFER_SOL);
-        assert_eq!(&p[offsets::ACTION_BODY..offsets::ACTION_BODY + 32], &[0x44; 32]);
+        assert_eq!(
+            p[offsets::ACTION_TAG],
+            crate::intent::ACTION_TAG_TRANSFER_SOL
+        );
+        assert_eq!(
+            &p[offsets::ACTION_BODY..offsets::ACTION_BODY + 32],
+            &[0x44; 32]
+        );
         assert_eq!(
             &p[offsets::ACTION_BODY + 32..CANONICAL_PREIMAGE_LEN],
             &5_000_000_000u64.to_le_bytes()

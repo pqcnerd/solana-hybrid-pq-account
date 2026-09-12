@@ -1,6 +1,18 @@
 //! DualKey instruction discriminators.
 //!
-//! Instruction bodies and full decoding land in later milestones.
+//! Discriminators 0–4 are the real account instructions; their bodies land in
+//! later milestones.
+//!
+//! Discriminators 240–242 are the Milestone 2 verification harness. They exist
+//! to prove Falcon-512 verification and the canonical digest actually run under
+//! SBF and to measure their compute cost. They are deliberately numbered far
+//! away from the real instruction set so they can be deleted without
+//! renumbering anything.
+//!
+//! The harness instructions authorize nothing: they own no account, move no
+//! lamports, and mutate no state. They are pure verification oracles whose only
+//! observable effect is success or failure and the compute units consumed.
+//! Milestone 3 onward must not build authorization on top of them.
 
 /// Instruction discriminators (first byte of instruction data).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -16,10 +28,36 @@ pub enum DualKeyInstruction {
     RotateFalconKey = 3,
     /// Change authorization policy (Milestone 10).
     ChangePolicy = 4,
+
+    /// Milestone 2 harness: verify a Falcon-512 signature against the prepared
+    /// public key held in the first account's data.
+    ///
+    /// Accounts:
+    /// * `[0]` readonly — data begins with a [`PREPARED_FALCON_PUBKEY_LEN`]
+    ///   prepared public key. Solana guarantees 8-byte-aligned account data.
+    ///
+    /// Instruction data: `[240] ‖ signature(666) ‖ message(..)`
+    ///
+    /// [`PREPARED_FALCON_PUBKEY_LEN`]: crate::auth::falcon::PREPARED_FALCON_PUBKEY_LEN
+    VerifyFalconPrepared = 240,
+
+    /// Milestone 2 harness: verify a Falcon-512 signature against a raw
+    /// 897-byte wire public key supplied in instruction data, decoding and
+    /// running the forward NTT in-instruction.
+    ///
+    /// Instruction data: `[241] ‖ signature(666) ‖ pubkey(897) ‖ message(..)`
+    VerifyFalconRaw = 241,
+
+    /// Milestone 2 harness: recompute a canonical digest with `sol_sha256` and
+    /// compare it to an expected digest, proving the on-chain hash agrees with
+    /// the client's `sha2` digest over identical preimage bytes.
+    ///
+    /// Instruction data: `[242] ‖ preimage(172) ‖ expected_digest(32)`
+    VerifyCanonicalDigest = 242,
 }
 
 impl DualKeyInstruction {
-    /// Parse the discriminator byte.
+    /// Parse the discriminator byte. Unknown values yield `None`.
     pub const fn from_u8(value: u8) -> Option<Self> {
         match value {
             0 => Some(Self::Initialize),
@@ -27,11 +65,22 @@ impl DualKeyInstruction {
             2 => Some(Self::RotateEd25519Key),
             3 => Some(Self::RotateFalconKey),
             4 => Some(Self::ChangePolicy),
+            240 => Some(Self::VerifyFalconPrepared),
+            241 => Some(Self::VerifyFalconRaw),
+            242 => Some(Self::VerifyCanonicalDigest),
             _ => None,
         }
     }
 
     pub const fn as_u8(self) -> u8 {
         self as u8
+    }
+
+    /// Whether this is a Milestone 2 verification-harness instruction.
+    pub const fn is_verification_harness(self) -> bool {
+        matches!(
+            self,
+            Self::VerifyFalconPrepared | Self::VerifyFalconRaw | Self::VerifyCanonicalDigest
+        )
     }
 }

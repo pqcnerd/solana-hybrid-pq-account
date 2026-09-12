@@ -20,10 +20,38 @@ solana-program-error = { workspace = true }
 # Exact crate versions are pinned via Cargo.lock once resolved.
 solana-account-info = "3"
 solana-program-entrypoint = "3"
-solana-pubkey = "3"
+# v4 to match what solana-program-entrypoint itself depends on. `Pubkey` is an
+# alias for `solana_address::Address`, and v3 reaches the same type only through
+# the solana-address v1 facade; depending on v4 directly removes that hop.
+solana-pubkey = "4"
 solana-msg = "3"
+# SHA-256 via the `sol_sha256` syscall on-chain. `dualkey-core` stays
+# dependency-free and hasher-agnostic; this supplies the on-chain hasher.
+solana-sha256-hasher = "3"
+
+# PDA account creation (Milestone 3). `invoke_signed` is required because a PDA
+# has no private key: only the owning program can sign for it.
+solana-cpi = "3"
+solana-instruction = "3"
+solana-system-interface = { version = "3", features = ["bincode"] }
+# Rent-exempt minimum for the fixed 1120-byte account, read from the sysvar
+# rather than hardcoded, so it tracks the cluster.
+solana-rent = { version = "4", features = ["sysvar"] }
+solana-get-sysvar = "1"
+
+# PDA derivation is a syscall on-chain, but needs a software curve25519
+# implementation to compile for the host (cargo check / clippy / tests).
+# Scoping the feature to non-Solana targets keeps curve25519-dalek out of the
+# SBF binary, which uses `sol_try_find_program_address` instead.
+[target.'cfg(not(target_os = "solana"))'.dependencies]
+solana-pubkey = { version = "4", features = ["curve25519"] }
 
 [dev-dependencies]
+# Intentionally empty. The SBF integration tests live in the `client` crate so
+# that no Falcon *signer* (pqcrypto-falcon) ever appears in this package's
+# dependency graph, not even behind `[dev-dependencies]`. Those tests load the
+# compiled .so through Mollusk, which mirrors the real trust boundary: the
+# client signs off-chain, this program only verifies.
 
 [features]
 default = []

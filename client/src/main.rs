@@ -4,6 +4,7 @@
 
 use clap::{Parser, Subcommand};
 use dualkey_client::{keygen, sign, submit};
+use dualkey_core::AuthorizationPolicy;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -43,12 +44,27 @@ enum Commands {
         #[arg(long)]
         input: PathBuf,
     },
-    /// Initialize a DualKey HybridAccount on-chain (Milestone 3).
+    /// Build the Initialize instruction for a DualKey HybridAccount PDA.
+    ///
+    /// Prints the derived address and instruction; does not broadcast.
     Init {
         #[arg(long, default_value = "keys")]
         keys: PathBuf,
+        /// Selects among multiple vaults for the same creator.
         #[arg(long, default_value_t = 0)]
         account_index: u32,
+        /// Deployed DualKey program address (base58).
+        #[arg(long)]
+        program_id: String,
+        /// Creator address (base58). Pays rent, signs, and is a PDA seed.
+        #[arg(long)]
+        creator: String,
+        /// Authorization policy: ed25519-only, falcon-only, or hybrid-and.
+        #[arg(long, default_value = "hybrid-and")]
+        policy: String,
+        /// Also write the instruction as JSON here.
+        #[arg(long)]
+        out: Option<PathBuf>,
     },
     /// Submit a hybrid-authorized SOL transfer (Milestone 7).
     Transfer {
@@ -70,12 +86,28 @@ fn main() -> ExitCode {
         Commands::Init {
             keys,
             account_index,
-        } => submit::init(&keys, account_index),
-        Commands::Transfer {
-            to,
-            lamports,
-            keys,
-        } => submit::transfer(&keys, &to, lamports),
+            program_id,
+            creator,
+            policy,
+            out,
+        } => match AuthorizationPolicy::from_name(&policy) {
+            Some(policy) => submit::init(
+                &keys,
+                account_index,
+                &program_id,
+                &creator,
+                policy,
+                out.as_deref(),
+            ),
+            None => {
+                eprintln!(
+                    "error: unknown policy {policy:?}; expected one of \
+                     ed25519-only, falcon-only, hybrid-and"
+                );
+                return ExitCode::FAILURE;
+            }
+        },
+        Commands::Transfer { to, lamports, keys } => submit::transfer(&keys, &to, lamports),
     };
 
     match result {

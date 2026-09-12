@@ -21,8 +21,6 @@ use std::path::Path;
 
 use dualkey_core::{AuthorizationIntent, DIGEST_LEN};
 use ed25519_dalek::{Signature, Signer, Verifier, VerifyingKey};
-use pqcrypto_falcon::falcon512;
-use pqcrypto_traits::sign::PublicKey as _;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{ClientError, Result};
@@ -138,7 +136,10 @@ impl VerificationReport {
             }
         }
         let mut s = String::new();
-        s.push_str(&format!("Digest:                 {}\n", hex::encode(self.digest)));
+        s.push_str(&format!(
+            "Digest:                 {}\n",
+            hex::encode(self.digest)
+        ));
         s.push_str(&format!(
             "Ed25519 verification:   {}\n",
             mark(self.ed25519_valid)
@@ -178,28 +179,25 @@ pub fn verify_bundle(bundle: &SignedBundle) -> Result<VerificationReport> {
     let message: &[u8] = &recomputed.digest;
 
     // --- Ed25519 -----------------------------------------------------------
-    let ed_pk_bytes = hex::decode(&bundle.ed25519_public_key).map_err(|source| {
-        ClientError::Hex {
+    let ed_pk_bytes =
+        hex::decode(&bundle.ed25519_public_key).map_err(|source| ClientError::Hex {
             field: "ed25519_public_key",
             source,
-        }
-    })?;
-    let ed_sig_bytes = hex::decode(&bundle.ed25519_signature).map_err(|source| {
-        ClientError::Hex {
+        })?;
+    let ed_sig_bytes =
+        hex::decode(&bundle.ed25519_signature).map_err(|source| ClientError::Hex {
             field: "ed25519_signature",
             source,
-        }
-    })?;
+        })?;
 
     let ed25519_valid = verify_ed25519(&ed_pk_bytes, &ed_sig_bytes, message);
 
     // --- Falcon ------------------------------------------------------------
-    let falcon_pk_bytes = hex::decode(&bundle.falcon512_public_key).map_err(|source| {
-        ClientError::Hex {
+    let falcon_pk_bytes =
+        hex::decode(&bundle.falcon512_public_key).map_err(|source| ClientError::Hex {
             field: "falcon512_public_key",
             source,
-        }
-    })?;
+        })?;
     let falcon_wire_bytes =
         hex::decode(&bundle.falcon512_signature_wire).map_err(|source| ClientError::Hex {
             field: "falcon512_signature_wire",
@@ -208,13 +206,10 @@ pub fn verify_bundle(bundle: &SignedBundle) -> Result<VerificationReport> {
 
     let wire = WireSignature::from_wire_bytes(&falcon_wire_bytes)?;
 
-    let falcon_pqclean_valid = match (
-        falcon512::PublicKey::from_bytes(&falcon_pk_bytes),
-        wire.to_pqclean(),
-    ) {
-        (Ok(pk), Ok(sig)) => falcon_interop::verify_pqclean(&sig, message, &pk),
-        _ => false,
-    };
+    // Verify PQClean against the identical 666 padded bytes the on-chain
+    // verifier sees, rather than a length-recovered reconstruction.
+    let falcon_pqclean_valid =
+        falcon_interop::verify_pqclean_wire(&wire, message, &falcon_pk_bytes);
 
     let falcon_solana_valid = falcon_interop::verify_solana_raw(&wire, message, &falcon_pk_bytes);
 

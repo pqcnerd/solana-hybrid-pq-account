@@ -26,14 +26,26 @@ they were the same number — LiteSVM includes transaction overhead.
 
 Use these as comparison targets when DualKey benches land:
 
-| Path | Compute units (upstream) |
-|------|-------------------------:|
-| `verify_with_prepared` (success) | ~173k–183k |
-| `verify_with_prepared` (rejection) | ~173k–183k |
-| `verify` (raw pubkey) | ~270k |
-| Safe CU limit (prepared) | 195,000 |
+| Path | Upstream | Measured in DualKey (Milestone 2) |
+|------|---------:|----------------------------------:|
+| `verify_with_prepared` (success) | ~173k–183k | 172.6k – 193.4k |
+| `verify_with_prepared` (rejection) | ~173k–183k | ~173.0k (invalid signature) |
+| `verify` (raw pubkey) | ~270k | 224.6k – 245.4k |
+| Prepared-vs-raw delta | ~99k | **51,991 CU, deterministic** |
+| Safe CU limit (prepared) | 195,000 | holds; 205,000 tail ceiling |
+| `Initialize` (Milestone 3) | — | **60,854 CU, deterministic** |
+| ↳ `try_prepare_pubkey` alone | ~99k | **52,410 CU, deterministic** |
 
-Variance comes from SHAKE-256 rejection sampling in `hash_to_point`.
+Measured over a 32-byte digest with Mollusk 0.15.1 against the compiled `.so`;
+full table in [`milestone-2.md`](milestone-2.md).
+
+Variance comes from SHAKE-256 rejection sampling in `hash_to_point`, and it is
+**quantized**: cost moves in ~10,150 CU steps, one Keccak-f[1600] permutation.
+Benchmarks must therefore report a range over several signatures. A single
+sample is not a meaningful figure for this primitive, and a median over a small
+sample is not stable either — two runs of the same 9-sample measurement gave
+medians 9,500 CU apart. Report min/max, and prefer deterministic *deltas*
+(e.g. prepared vs raw) when comparing designs.
 
 ## Metrics to record
 
@@ -43,7 +55,11 @@ Variance comes from SHAKE-256 rejection sampling in `hash_to_point`.
 - Falcon-only authorization path
 - HybridAnd authorization path
 - Falcon verification alone (prepared vs raw, if raw probe retained)
-- Account initialization (includes `try_prepare_pubkey` ~99k CU)
+- ~~Account initialization (includes `try_prepare_pubkey`)~~ — **measured in
+  Milestone 3: 60,854 CU total**, of which `try_prepare_pubkey` is 52,410 CU and
+  parsing + PDA derivation + three System CPIs are 8,444 CU. Fully deterministic
+  across runs, unlike verification. The ~99k estimate does not reproduce for
+  this quantity either; see [`milestone-3.md`](milestone-3.md).
 - SOL-transfer action portion (post-auth)
 
 ### Sizes
