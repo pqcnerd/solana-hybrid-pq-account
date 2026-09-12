@@ -1,18 +1,17 @@
 //! DualKey instruction discriminators.
 //!
-//! Discriminators 0–5 are the real account instructions; their bodies land in
-//! later milestones.
+//! Discriminators 0–9 are the live account instructions (Initialize through
+//! CancelSocialRecovery).
 //!
-//! Discriminators 240–242 are the Milestone 2 verification harness. They exist
-//! to prove Falcon-512 verification and the canonical digest actually run under
-//! SBF and to measure their compute cost. They are deliberately numbered far
-//! away from the real instruction set so they can be deleted without
-//! renumbering anything.
+//! Discriminators 240–243 are the Milestone 2–4 verification / reconstruction
+//! harness. They exist to prove Falcon-512 verification and the canonical
+//! digest actually run under SBF and to measure their compute cost. They are
+//! deliberately numbered far away from the real instruction set so they can be
+//! deleted without renumbering anything.
 //!
 //! The harness instructions authorize nothing: they own no account, move no
 //! lamports, and mutate no state. They are pure verification oracles whose only
 //! observable effect is success or failure and the compute units consumed.
-//! Milestone 3 onward must not build authorization on top of them.
 
 /// Instruction discriminators (first byte of instruction data).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

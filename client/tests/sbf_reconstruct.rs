@@ -3,7 +3,8 @@
 //! Proves the program rebuilds the same canonical digest the client signs, using
 //! only trusted context (program id, account address, stored nonce, compile-time
 //! chain domain) plus the 49-byte wire fragment. Authorization is not tested
-//! here — `Execute` remains unimplemented.
+//! here — authorization lives in `Execute` and later instructions (tested in
+//! `sbf_hybrid.rs` and friends).
 
 use dualkey_client::onchain;
 use dualkey_core::{

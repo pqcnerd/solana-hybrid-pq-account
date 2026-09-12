@@ -8,9 +8,11 @@
   non-goals that shipped (CLI RPC, Token-2022 base, social recovery) listed as
   Delivered.
 - CLI: all six policies in help; subcommands for `change-policy`,
-  `rotate-ed25519`, `recover`, `transfer-spl`, plus `--broadcast` flags (M13).
-- [`scripts/demo-localnet.sh`](../scripts/demo-localnet.sh): keygen → init →
-  transfer against `solana-test-validator`.
+  `rotate-ed25519`, `rotate-falcon`, `recover`, `transfer-spl`,
+  `social {set-config,initiate,finalize,cancel}`, plus `--broadcast` flags.
+- [`scripts/demo-localnet.sh`](../scripts/demo-localnet.sh): one-shot keygen →
+  init (`--out` JSON) → fund → transfer against `solana-test-validator`
+  (`PROGRAM_ID` + `PAYER` required).
 - Threat model: guardian+timelock and Token-2022 hook refusal rows.
 - Verification: `cargo fmt` / `clippy -D warnings` / SBF build / workspace tests.
 

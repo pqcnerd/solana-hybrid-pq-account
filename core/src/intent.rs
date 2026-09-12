@@ -15,7 +15,7 @@ pub const ACTION_TAG_ROTATE_ED25519: u8 = 3;
 pub const ACTION_TAG_ROTATE_FALCON: u8 = 4;
 /// Action discriminator for `ChangePolicy` (Milestone 10).
 pub const ACTION_TAG_CHANGE_POLICY: u8 = 5;
-/// Action discriminator for `RecoverAccount` (project completion).
+/// Action discriminator for `RecoverAccount` (Milestone 12).
 pub const ACTION_TAG_RECOVER_ACCOUNT: u8 = 6;
 /// Action discriminator for `SetRecoveryConfig` (Milestone 15).
 pub const ACTION_TAG_SET_RECOVERY_CONFIG: u8 = 7;
@@ -104,7 +104,7 @@ pub enum Action {
         /// Lamport threshold for `FalconAboveThreshold` (meaningful only then).
         threshold: u64,
     },
-    /// Recovery controls (project completion).
+    /// Recovery controls (Milestone 12).
     ///
     /// Wire body: `op[1] ‖ pad[7] ‖ new_ed25519[32]`.
     ///

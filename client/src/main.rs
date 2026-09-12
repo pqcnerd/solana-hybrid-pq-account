@@ -200,6 +200,103 @@ enum Commands {
         #[command(flatten)]
         rpc: RpcArgs,
     },
+    /// Rotate the Falcon-512 public key (Milestone 9; requires PoP under new key).
+    RotateFalcon {
+        #[arg(long, default_value = "keys")]
+        keys: PathBuf,
+        /// Directory holding the *new* Falcon keypair (`falcon512.sk` / `.pk`).
+        #[arg(long)]
+        new_falcon_keys: PathBuf,
+        #[arg(long)]
+        program_id: String,
+        #[arg(long)]
+        account: String,
+        #[arg(long)]
+        nonce: Option<u64>,
+        #[arg(long)]
+        expiry_slot: u64,
+        #[arg(long)]
+        out: Option<PathBuf>,
+        #[command(flatten)]
+        rpc: RpcArgs,
+    },
+    /// Social recovery (guardian + timelock, Milestone 15).
+    Social {
+        #[command(subcommand)]
+        op: SocialCmd,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum SocialCmd {
+    /// Set / replace guardian Ed25519 + delay_slots.
+    SetConfig {
+        #[arg(long, default_value = "keys")]
+        keys: PathBuf,
+        #[arg(long)]
+        program_id: String,
+        #[arg(long)]
+        account: String,
+        /// Guardian Ed25519 pubkey (base58).
+        #[arg(long)]
+        guardian: String,
+        #[arg(long)]
+        delay_slots: u64,
+        #[arg(long)]
+        nonce: Option<u64>,
+        #[arg(long)]
+        expiry_slot: u64,
+        #[arg(long)]
+        out: Option<PathBuf>,
+        #[command(flatten)]
+        rpc: RpcArgs,
+    },
+    /// Guardian proposes a new Ed25519 owner (signs social-recover digest).
+    Initiate {
+        #[arg(long)]
+        program_id: String,
+        #[arg(long)]
+        account: String,
+        #[arg(long)]
+        new_owner: String,
+        /// Key directory for the guardian Ed25519 keypair.
+        #[arg(long)]
+        guardian_keys: PathBuf,
+        #[arg(long)]
+        nonce: Option<u64>,
+        #[arg(long)]
+        out: Option<PathBuf>,
+        #[command(flatten)]
+        rpc: RpcArgs,
+    },
+    /// Permissionless finalize after the slot delay.
+    Finalize {
+        #[arg(long)]
+        program_id: String,
+        #[arg(long)]
+        account: String,
+        #[arg(long)]
+        out: Option<PathBuf>,
+        #[command(flatten)]
+        rpc: RpcArgs,
+    },
+    /// DualKey owner cancels a pending social recovery.
+    Cancel {
+        #[arg(long, default_value = "keys")]
+        keys: PathBuf,
+        #[arg(long)]
+        program_id: String,
+        #[arg(long)]
+        account: String,
+        #[arg(long)]
+        nonce: Option<u64>,
+        #[arg(long)]
+        expiry_slot: u64,
+        #[arg(long)]
+        out: Option<PathBuf>,
+        #[command(flatten)]
+        rpc: RpcArgs,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -466,6 +563,92 @@ fn main() -> ExitCode {
             broadcast: rpc.opts(),
             out: out.as_deref(),
         }),
+        Commands::RotateFalcon {
+            keys,
+            new_falcon_keys,
+            program_id,
+            account,
+            nonce,
+            expiry_slot,
+            out,
+            rpc,
+        } => submit::rotate_falcon(
+            lifecycle(
+                &keys,
+                &program_id,
+                &account,
+                nonce,
+                expiry_slot,
+                out.as_ref(),
+                &rpc,
+            ),
+            &new_falcon_keys,
+        ),
+        Commands::Social { op } => match op {
+            SocialCmd::SetConfig {
+                keys,
+                program_id,
+                account,
+                guardian,
+                delay_slots,
+                nonce,
+                expiry_slot,
+                out,
+                rpc,
+            } => submit::social_set_config(
+                lifecycle(
+                    &keys,
+                    &program_id,
+                    &account,
+                    nonce,
+                    expiry_slot,
+                    out.as_ref(),
+                    &rpc,
+                ),
+                &guardian,
+                delay_slots,
+            ),
+            SocialCmd::Initiate {
+                program_id,
+                account,
+                new_owner,
+                guardian_keys,
+                nonce,
+                out,
+                rpc,
+            } => submit::social_initiate(
+                &program_id,
+                &account,
+                &new_owner,
+                &guardian_keys,
+                nonce,
+                &rpc.opts(),
+                out.as_deref(),
+            ),
+            SocialCmd::Finalize {
+                program_id,
+                account,
+                out,
+                rpc,
+            } => submit::social_finalize(&program_id, &account, &rpc.opts(), out.as_deref()),
+            SocialCmd::Cancel {
+                keys,
+                program_id,
+                account,
+                nonce,
+                expiry_slot,
+                out,
+                rpc,
+            } => submit::social_cancel(lifecycle(
+                &keys,
+                &program_id,
+                &account,
+                nonce,
+                expiry_slot,
+                out.as_ref(),
+                &rpc,
+            )),
+        },
     };
 
     match result {

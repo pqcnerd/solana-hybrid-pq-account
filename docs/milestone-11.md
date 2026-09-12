@@ -78,12 +78,14 @@ Wrong creator → `InvalidPda`. Source not owned by the PDA →
 
 ---
 
-## 3. Explicitly not done
+## 3. Explicitly not done (at M11 ship time)
 
-- **No Token-2022 / transfer hooks / ATAs helper instruction**
-- **No `RecoverAccount`**
-- **No CLI `transfer-spl` subcommand** (builder only)
-- No minting / ATA creation helpers on-chain
+Historical — later milestones closed several of these:
+
+- Token-2022 base accounts: [`milestone-14.md`](milestone-14.md) (hooks still refused)
+- `RecoverAccount`: [`milestone-12.md`](milestone-12.md)
+- CLI `transfer-spl` (+ `--broadcast`): Milestone 16 / [`milestone-13.md`](milestone-13.md)
+- No minting / ATA creation helpers on-chain (still true)
 
 ---
 
@@ -93,11 +95,9 @@ Wrong creator → `InvalidPda`. Source not owned by the PDA →
 unset CARGO_TARGET_DIR
 export CARGO_TARGET_DIR="$PWD/target"
 cargo-build-sbf --manifest-path program/Cargo.toml
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets
-cargo test --workspace
-cargo test -p dualkey-client --release --test sbf_spl
+cargo test -p dualkey-client --test sbf_spl
 ```
 
-Milestone 11 completes the planned DualKey spend/policy surface through SPL.
-See [`milestone-12.md`](milestone-12.md) for RecoverAccount / project completion.
+Milestone 11 completes classic SPL spend. See [`milestone-14.md`](milestone-14.md)
+for Token-2022 and [`STATUS.md`](STATUS.md) for the full surface.
+

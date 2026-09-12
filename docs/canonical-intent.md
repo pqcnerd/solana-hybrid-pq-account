@@ -163,8 +163,8 @@ agreement without duplicating the fixture:
 | `TEST_VECTOR_PREIMAGE_PREFIX` | `0x11 ‖ "DUALKEY_SOLANA_V1" ‖ 0x01` |
 | `TEST_VECTOR_DIGEST` | `6182ba27c082b3e8110e47a2af27e0ece6f5eee8fcea6e7927e40707f8deb5ec` |
 
-Changing `TEST_VECTOR_DIGEST` is a breaking protocol change. Milestone 2 will
-assert the on-chain `sol_sha256` path reproduces the same value, closing
+Changing `TEST_VECTOR_DIGEST` is a breaking protocol change. Milestone 2
+asserted the on-chain `sol_sha256` path reproduces the same value, closing
 invariant 10 across both layers.
 
 Covered by `client_sha256_agrees_with_core_test_vectors`, which also asserts

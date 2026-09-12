@@ -466,6 +466,384 @@ pub fn rotate_ed25519(params: LifecycleParams<'_>, new_owner: &str) -> Result<()
     )
 }
 
+/// Rotate the Falcon public key under the current policy (with PoP).
+pub fn rotate_falcon(params: LifecycleParams<'_>, new_falcon_keys: &Path) -> Result<()> {
+    let program_id = parse_pubkey("program_id", params.program_id)?;
+    let hybrid_account = parse_pubkey("account", params.hybrid_account)?;
+    let paths = KeyPaths::new(params.keys_dir);
+    let ed = Ed25519Keypair::load(&paths)?;
+    let falcon = FalconKeypair::load(&paths)?;
+    let new_falcon = FalconKeypair::load(&KeyPaths::new(new_falcon_keys))?;
+    let new_public = PublicKeys::load(&KeyPaths::new(new_falcon_keys))?;
+    let nonce = resolve_nonce(&hybrid_account, params.nonce, &params.broadcast)?;
+
+    let intent = onchain::signing_intent(
+        &program_id,
+        &hybrid_account,
+        nonce,
+        params.expiry_slot,
+        Action::RotateFalconKey {
+            new_pubkey_hash: new_public.falcon_public_key_hash(),
+        },
+    );
+    let digest = canonical_digest(&intent);
+    let ed_sig = ed.signing_key().sign(&digest).to_bytes();
+    let (_a, auth_wire) = falcon_interop::sign_to_wire(&digest, falcon.secret())?;
+    let (_p, pop_wire) = falcon_interop::sign_to_wire(&digest, new_falcon.secret())?;
+    let ed_ix = onchain::ed25519_precompile_instruction(&digest, &ed_sig, &ed.public_bytes());
+    let ix = onchain::rotate_falcon_instruction(
+        &program_id,
+        &hybrid_account,
+        &intent,
+        auth_wire.as_wire_bytes(),
+        new_public.falcon_wire(),
+        pop_wire.as_wire_bytes(),
+    )?;
+
+    let mut signature = None;
+    if params.broadcast.broadcast {
+        let (url, payer_path) = params.broadcast.require_for_broadcast()?;
+        let rpc = Rpc::new(url);
+        let payer = rpc::load_payer(payer_path)?;
+        signature = Some(rpc::send_instructions(
+            &rpc,
+            &payer,
+            &[ed_ix.clone(), ix.clone()],
+        )?);
+    }
+
+    println!("Digest:    {}", hex::encode(digest));
+    println!("Nonce:     {nonce}");
+    println!(
+        "New Falcon SHA256: {}",
+        hex::encode(new_public.falcon_public_key_hash())
+    );
+    println!("Ix data:   {} bytes", ix.data.len());
+    if let Some(ref sig) = signature {
+        println!("Submitted: {sig}");
+    } else {
+        println!("Not submitted. Pass --broadcast --rpc-url --payer to submit.");
+    }
+    if let Some(path) = params.out {
+        let json = serde_json::json!({
+            "digest": hex::encode(digest),
+            "nonce": nonce,
+            "new_falcon_public_key_sha256": hex::encode(new_public.falcon_public_key_hash()),
+            "ed25519_precompile_data_hex": hex::encode(&ed_ix.data),
+            "instruction_data_hex": hex::encode(&ix.data),
+            "signature": signature,
+        });
+        crate::keys::write_with_mode(
+            path,
+            &serde_json::to_vec_pretty(&json)?,
+            crate::keys::PUBLIC_MODE,
+        )?;
+        println!("Artifact written to {}", path.display());
+    }
+    Ok(())
+}
+
+fn print_submit_result(digest: &[u8; 32], nonce: u64, ix_len: usize, signature: &Option<String>) {
+    println!("Digest:    {}", hex::encode(digest));
+    println!("Nonce:     {nonce}");
+    println!("Ix data:   {ix_len} bytes");
+    if let Some(sig) = signature {
+        println!("Submitted: {sig}");
+    } else {
+        println!("Not submitted. Pass --broadcast --rpc-url --payer to submit.");
+    }
+}
+
+/// Set / replace social-recovery guardian + delay (Milestone 15).
+pub fn social_set_config(
+    params: LifecycleParams<'_>,
+    guardian: &str,
+    delay_slots: u64,
+) -> Result<()> {
+    let program_id = parse_pubkey("program_id", params.program_id)?;
+    let hybrid_account = parse_pubkey("account", params.hybrid_account)?;
+    let guardian_ed25519 = parse_pubkey("guardian", guardian)?.to_bytes();
+    let (recovery_config, _) = onchain::derive_recovery_config(&program_id, &hybrid_account)?;
+    let paths = KeyPaths::new(params.keys_dir);
+    let ed = Ed25519Keypair::load(&paths)?;
+    let falcon = FalconKeypair::load(&paths)?;
+    let nonce = resolve_nonce(&hybrid_account, params.nonce, &params.broadcast)?;
+
+    let intent = onchain::signing_intent(
+        &program_id,
+        &hybrid_account,
+        nonce,
+        params.expiry_slot,
+        Action::SetRecoveryConfig {
+            guardian_ed25519,
+            delay_slots,
+        },
+    );
+    let digest = canonical_digest(&intent);
+    let ed_sig = ed.signing_key().sign(&digest).to_bytes();
+    let (_pq, wire) = falcon_interop::sign_to_wire(&digest, falcon.secret())?;
+    let ed_ix = onchain::ed25519_precompile_instruction(&digest, &ed_sig, &ed.public_bytes());
+
+    if params.broadcast.broadcast {
+        let (url, payer_path) = params.broadcast.require_for_broadcast()?;
+        let rpc = Rpc::new(url);
+        let payer = rpc::load_payer(payer_path)?;
+        let ix = onchain::set_recovery_config_instruction(
+            &program_id,
+            &hybrid_account,
+            &recovery_config,
+            &payer.pubkey(),
+            &intent,
+            wire.as_wire_bytes(),
+        )?;
+        let signature = Some(rpc::send_instructions(
+            &rpc,
+            &payer,
+            &[ed_ix.clone(), ix.clone()],
+        )?);
+        print_submit_result(&digest, nonce, ix.data.len(), &signature);
+        println!("RecoveryConfig: {recovery_config}");
+        if let Some(path) = params.out {
+            let json = serde_json::json!({
+                "digest": hex::encode(digest),
+                "nonce": nonce,
+                "recovery_config": recovery_config.to_string(),
+                "ed25519_precompile_data_hex": hex::encode(&ed_ix.data),
+                "instruction_data_hex": hex::encode(&ix.data),
+                "signature": signature,
+            });
+            crate::keys::write_with_mode(
+                path,
+                &serde_json::to_vec_pretty(&json)?,
+                crate::keys::PUBLIC_MODE,
+            )?;
+            println!("Artifact written to {}", path.display());
+        }
+    } else {
+        // Offline: use a placeholder payer pubkey (must match when broadcasting).
+        let placeholder = Pubkey::new_from_array([0u8; 32]);
+        let ix = onchain::set_recovery_config_instruction(
+            &program_id,
+            &hybrid_account,
+            &recovery_config,
+            &placeholder,
+            &intent,
+            wire.as_wire_bytes(),
+        )?;
+        print_submit_result(&digest, nonce, ix.data.len(), &None);
+        println!("RecoveryConfig: {recovery_config}");
+        println!("Note: offline artifact uses zero payer; rebuild with --broadcast.");
+        if let Some(path) = params.out {
+            let json = serde_json::json!({
+                "digest": hex::encode(digest),
+                "nonce": nonce,
+                "recovery_config": recovery_config.to_string(),
+                "ed25519_precompile_data_hex": hex::encode(&ed_ix.data),
+                "instruction_data_hex": hex::encode(&ix.data),
+            });
+            crate::keys::write_with_mode(
+                path,
+                &serde_json::to_vec_pretty(&json)?,
+                crate::keys::PUBLIC_MODE,
+            )?;
+            println!("Artifact written to {}", path.display());
+        }
+    }
+    Ok(())
+}
+
+/// Guardian initiates a pending Ed25519 owner change.
+pub fn social_initiate(
+    program_id: &str,
+    hybrid_account: &str,
+    new_owner: &str,
+    guardian_keys: &Path,
+    nonce: Option<u64>,
+    broadcast: &BroadcastOpts,
+    out: Option<&Path>,
+) -> Result<()> {
+    let program_id = parse_pubkey("program_id", program_id)?;
+    let hybrid_account = parse_pubkey("account", hybrid_account)?;
+    let new_ed25519 = parse_pubkey("new-owner", new_owner)?.to_bytes();
+    let (recovery_config, _) = onchain::derive_recovery_config(&program_id, &hybrid_account)?;
+    let guardian = Ed25519Keypair::load(&KeyPaths::new(guardian_keys))?;
+
+    let nonce = match nonce {
+        Some(n) => n,
+        None => {
+            let (url, _) =
+                broadcast
+                    .require_for_broadcast()
+                    .map_err(|_| ClientError::IntentFormat {
+                        path: "nonce".into(),
+                        reason: "--nonce required unless --broadcast --rpc-url is set".into(),
+                    })?;
+            Rpc::new(url).get_hybrid_nonce(&hybrid_account)?
+        }
+    };
+
+    let digest = dualkey_core::social_recover_digest(
+        &dualkey_core::CHAIN_DOMAIN_LOCALNET,
+        &program_id.to_bytes(),
+        &hybrid_account.to_bytes(),
+        &new_ed25519,
+        nonce,
+    );
+    let g_sig = guardian.signing_key().sign(&digest).to_bytes();
+    let ed_ix = onchain::ed25519_precompile_instruction(&digest, &g_sig, &guardian.public_bytes());
+    let ix = onchain::initiate_social_recovery_instruction(
+        &program_id,
+        &hybrid_account,
+        &recovery_config,
+        &new_ed25519,
+    );
+
+    let mut signature = None;
+    if broadcast.broadcast {
+        let (url, payer_path) = broadcast.require_for_broadcast()?;
+        let rpc = Rpc::new(url);
+        let payer = rpc::load_payer(payer_path)?;
+        signature = Some(rpc::send_instructions(
+            &rpc,
+            &payer,
+            &[ed_ix.clone(), ix.clone()],
+        )?);
+    }
+
+    print_submit_result(&digest, nonce, ix.data.len(), &signature);
+    println!("RecoveryConfig: {recovery_config}");
+    if let Some(path) = out {
+        let json = serde_json::json!({
+            "digest": hex::encode(digest),
+            "nonce": nonce,
+            "recovery_config": recovery_config.to_string(),
+            "ed25519_precompile_data_hex": hex::encode(&ed_ix.data),
+            "instruction_data_hex": hex::encode(&ix.data),
+            "signature": signature,
+        });
+        crate::keys::write_with_mode(
+            path,
+            &serde_json::to_vec_pretty(&json)?,
+            crate::keys::PUBLIC_MODE,
+        )?;
+        println!("Artifact written to {}", path.display());
+    }
+    Ok(())
+}
+
+/// Permissionless finalize after the social-recovery timelock.
+pub fn social_finalize(
+    program_id: &str,
+    hybrid_account: &str,
+    broadcast: &BroadcastOpts,
+    out: Option<&Path>,
+) -> Result<()> {
+    let program_id = parse_pubkey("program_id", program_id)?;
+    let hybrid_account = parse_pubkey("account", hybrid_account)?;
+    let (recovery_config, _) = onchain::derive_recovery_config(&program_id, &hybrid_account)?;
+    let ix = onchain::finalize_social_recovery_instruction(
+        &program_id,
+        &hybrid_account,
+        &recovery_config,
+    );
+
+    let mut signature = None;
+    if broadcast.broadcast {
+        let (url, payer_path) = broadcast.require_for_broadcast()?;
+        let rpc = Rpc::new(url);
+        let payer = rpc::load_payer(payer_path)?;
+        signature = Some(rpc::send_instructions(
+            &rpc,
+            &payer,
+            std::slice::from_ref(&ix),
+        )?);
+    }
+
+    println!("RecoveryConfig: {recovery_config}");
+    println!("Ix data:   {} bytes", ix.data.len());
+    if let Some(ref sig) = signature {
+        println!("Submitted: {sig}");
+    } else {
+        println!("Not submitted. Pass --broadcast --rpc-url --payer to submit.");
+    }
+    if let Some(path) = out {
+        let json = serde_json::json!({
+            "recovery_config": recovery_config.to_string(),
+            "instruction_data_hex": hex::encode(&ix.data),
+            "signature": signature,
+        });
+        crate::keys::write_with_mode(
+            path,
+            &serde_json::to_vec_pretty(&json)?,
+            crate::keys::PUBLIC_MODE,
+        )?;
+        println!("Artifact written to {}", path.display());
+    }
+    Ok(())
+}
+
+/// DualKey owner cancels a pending social recovery.
+pub fn social_cancel(params: LifecycleParams<'_>) -> Result<()> {
+    let program_id = parse_pubkey("program_id", params.program_id)?;
+    let hybrid_account = parse_pubkey("account", params.hybrid_account)?;
+    let (recovery_config, _) = onchain::derive_recovery_config(&program_id, &hybrid_account)?;
+    let paths = KeyPaths::new(params.keys_dir);
+    let ed = Ed25519Keypair::load(&paths)?;
+    let falcon = FalconKeypair::load(&paths)?;
+    let nonce = resolve_nonce(&hybrid_account, params.nonce, &params.broadcast)?;
+
+    let intent = onchain::signing_intent(
+        &program_id,
+        &hybrid_account,
+        nonce,
+        params.expiry_slot,
+        Action::CancelSocialRecovery,
+    );
+    let digest = canonical_digest(&intent);
+    let ed_sig = ed.signing_key().sign(&digest).to_bytes();
+    let (_pq, wire) = falcon_interop::sign_to_wire(&digest, falcon.secret())?;
+    let ed_ix = onchain::ed25519_precompile_instruction(&digest, &ed_sig, &ed.public_bytes());
+    let ix = onchain::cancel_social_recovery_instruction(
+        &program_id,
+        &hybrid_account,
+        &recovery_config,
+        &intent,
+        wire.as_wire_bytes(),
+    )?;
+
+    let mut signature = None;
+    if params.broadcast.broadcast {
+        let (url, payer_path) = params.broadcast.require_for_broadcast()?;
+        let rpc = Rpc::new(url);
+        let payer = rpc::load_payer(payer_path)?;
+        signature = Some(rpc::send_instructions(
+            &rpc,
+            &payer,
+            &[ed_ix.clone(), ix.clone()],
+        )?);
+    }
+
+    print_submit_result(&digest, nonce, ix.data.len(), &signature);
+    println!("RecoveryConfig: {recovery_config}");
+    if let Some(path) = params.out {
+        let json = serde_json::json!({
+            "digest": hex::encode(digest),
+            "nonce": nonce,
+            "recovery_config": recovery_config.to_string(),
+            "ed25519_precompile_data_hex": hex::encode(&ed_ix.data),
+            "instruction_data_hex": hex::encode(&ix.data),
+            "signature": signature,
+        });
+        crate::keys::write_with_mode(
+            path,
+            &serde_json::to_vec_pretty(&json)?,
+            crate::keys::PUBLIC_MODE,
+        )?;
+        println!("Artifact written to {}", path.display());
+    }
+    Ok(())
+}
+
 /// Parameters for [`transfer_spl`].
 pub struct TransferSplParams<'a> {
     pub keys_dir: &'a Path,

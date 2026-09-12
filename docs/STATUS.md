@@ -43,6 +43,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-Optional localnet smoke: [`scripts/demo-localnet.sh`](../scripts/demo-localnet.sh).
+Optional localnet smoke (one-shot): [`scripts/demo-localnet.sh`](../scripts/demo-localnet.sh)
+with `PROGRAM_ID` and `PAYER` set.
 
 See milestone docs under [`docs/`](.).

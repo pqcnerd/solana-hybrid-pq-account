@@ -152,15 +152,19 @@ solana-hybrid-pq-account/
 ├── README.md
 ├── LICENSE
 ├── rust-toolchain.toml
-├── scripts/setup-toolchain.sh
-├── core/                 # dualkey-core (shared, no_std-friendly)
-├── program/              # dualkey-program (on-chain)
-├── client/               # dualkey CLI
+├── scripts/
+│   ├── setup-toolchain.sh
+│   └── demo-localnet.sh      # one-shot init → transfer (M16)
+├── core/                     # dualkey-core (intent, policy, RecoveryConfig)
+├── program/                  # dualkey-program (on-chain; verify only)
+├── client/                   # dualkey CLI + Mollusk SBF tests
+│   └── src/{main,onchain,submit,rpc,…}.rs
 └── docs/
+    ├── STATUS.md
     ├── architecture.md
     ├── canonical-intent.md
     ├── threat-model.md
-    └── benchmark-plan.md
+    └── milestone-*.md
 ```
 
 ## Build instructions
@@ -278,6 +282,23 @@ Shared digest:          YES
 PQClean and the on-chain verifier (raw and prepared public-key paths), so an
 off-chain/on-chain divergence cannot pass unnoticed.
 
+### 4. On-chain builders and broadcast (Milestones 3–16)
+
+```bash
+# Offline artifact (default) or submit with --broadcast --rpc-url --payer
+cargo run -p dualkey-client -- init \
+  --keys ./keys --program-id <PROGRAM> --creator <CREATOR> --policy hybrid-and
+
+cargo run -p dualkey-client -- transfer \
+  --to <RECIPIENT> --lamports 1000 --program-id <PROGRAM> --account <HYBRID> \
+  --expiry-slot <SLOT> --broadcast --rpc-url http://127.0.0.1:8899 --payer ./payer.json
+
+# Also: transfer-spl, change-policy, rotate-ed25519, rotate-falcon,
+# recover {enable,disable,rotate-ed25519}, social {set-config,initiate,finalize,cancel}
+```
+
+One-shot localnet smoke: `PROGRAM_ID=… PAYER=… ./scripts/demo-localnet.sh`.
+
 This also demonstrates the HybridAnd property directly: flipping one bit of
 the Falcon signature yields `Ed25519 VALID` but `Falcon INVALID`, and the
 overall result is rejection.
@@ -297,7 +318,7 @@ message telling you to.
 ## Test instructions
 
 ```bash
-# Everything (needs the .so built first; ~184 tests as of Milestone 12)
+# Everything (needs the .so built first; ~200 tests as of Milestone 16)
 cargo test --workspace
 
 # Shared types, layout, canonical encoding
@@ -438,9 +459,11 @@ canonical preimage 172 B.
 
 ## Roadmap
 
-See milestones above. Do not advance until the current milestone’s tests pass.
+Milestones **0–16 are complete**. Remaining items are explicit non-goals
+(formal audit, transfer-hook resolution, multi-guardian, “quantum proof”).
+See [`docs/STATUS.md`](docs/STATUS.md).
 
-Research questions guiding the work:
+Research questions the repo answered:
 
 1. CU overhead of hybrid PQ authorization on Solana  
 2. Transaction-size overhead  
@@ -452,18 +475,22 @@ Research questions guiding the work:
 
 ## Documentation
 
-- [`docs/STATUS.md`](docs/STATUS.md) — project completion summary  
+- [`docs/STATUS.md`](docs/STATUS.md) — delivered surface + verify commands  
 - [`docs/architecture.md`](docs/architecture.md) — layers, PDA, layout, deps  
 - [`docs/canonical-intent.md`](docs/canonical-intent.md) — signing encoding  
 - [`docs/falcon-interop.md`](docs/falcon-interop.md) — PQClean ↔ on-chain Falcon encoding findings  
-- [`docs/milestone-2.md`](docs/milestone-2.md) — Falcon under SBF: measured CU, resolved open questions  
+- [`docs/milestone-2.md`](docs/milestone-2.md) — Falcon under SBF: measured CU  
 - [`docs/milestone-6.md`](docs/milestone-6.md) — replay protection + expiry  
 - [`docs/milestone-7.md`](docs/milestone-7.md) — hybrid-authorized SOL transfer  
 - [`docs/milestone-8.md`](docs/milestone-8.md) — CU + legacy transaction size  
 - [`docs/milestone-9.md`](docs/milestone-9.md) — key rotation + Falcon PoP  
 - [`docs/milestone-10.md`](docs/milestone-10.md) — richer policies + ChangePolicy  
 - [`docs/milestone-11.md`](docs/milestone-11.md) — SPL Token transfer  
-- [`docs/milestone-12.md`](docs/milestone-12.md) — RecoverAccount / project completion  
+- [`docs/milestone-12.md`](docs/milestone-12.md) — RecoverAccount  
+- [`docs/milestone-13.md`](docs/milestone-13.md) — CLI RPC broadcast  
+- [`docs/milestone-14.md`](docs/milestone-14.md) — Token-2022 TransferSpl  
+- [`docs/milestone-15.md`](docs/milestone-15.md) — social recovery  
+- [`docs/milestone-16.md`](docs/milestone-16.md) — polish  
 - [`docs/threat-model.md`](docs/threat-model.md) — adversaries and invariants  
 - [`docs/benchmark-plan.md`](docs/benchmark-plan.md) — measurement plan  
 

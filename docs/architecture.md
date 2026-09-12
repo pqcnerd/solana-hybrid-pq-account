@@ -1,6 +1,6 @@
 # DualKey Architecture
 
-**Status:** Milestone 0 design document.
+**Status:** Current through Milestone 16 (research complete). See [`STATUS.md`](STATUS.md).
 
 DualKey is a research-grade Solana smart-account architecture for **hybrid
 authorization**: classical Ed25519 and post-quantum Falcon-512 over the same
@@ -117,6 +117,15 @@ Milestones 9–10 and cryptographic agility.
 Authenticators (`owner_ed25519`, prepared Falcon pubkey, policy) live in
 **mutable account data** and can rotate without moving the address.
 
+**Social recovery config** (Milestone 15) is a separate PDA:
+
+```text
+["dualkey-rec", hybrid_account]
+```
+
+Fixed 128-byte `RecoveryConfig` (guardian Ed25519, delay slots, pending fields).
+See [`milestone-15.md`](milestone-15.md).
+
 **Tradeoff:** the address is no longer self-authenticating over the keys. The
 program must always read authenticators from validated account data, never
 from seeds. `falcon_public_key_hash` remains in state as an identification /
@@ -202,22 +211,22 @@ Declared in `dualkey_core::AuthorizationPolicy`:
 | `Ed25519Only` | implemented | Ed25519 |
 | `FalconOnly` | implemented | Falcon |
 | `HybridAnd` | implemented (default) | Ed25519 **AND** Falcon — no silent fallback |
-| `HybridOr` | Milestone 10 | either |
-| `FalconForPrivileged` | Milestone 10 | Falcon for privileged ops; Ed25519 for TransferSol |
-| `FalconAboveThreshold` | Milestone 10 | Falcon when lamports > threshold |
+| `HybridOr` | implemented | either |
+| `FalconForPrivileged` | implemented | Falcon for privileged ops; Ed25519 for normal transfers |
+| `FalconAboveThreshold` | implemented | Falcon when amount > threshold |
 
-## Authorization flow (target)
+## Authorization flow
 
 1. Load `HybridAccount`; validate PDA + bump  
 2. Validate version / chain domain  
 3. Validate `current_slot <= expiry_slot` (cheap reject before crypto)  
 4. Reconstruct intent; compute digest (nonce always from account state)  
 5. Validate reconstructed nonce matches account (invariant / `InvalidNonce`)  
-6. Verify Ed25519 via precompile introspection  
-7. Verify Falcon via prepared pubkey  
+6. Verify Ed25519 via precompile introspection (when required)  
+7. Verify Falcon via prepared pubkey (when required)  
 8. Evaluate policy (reject on failure)  
 9. Increment nonce  
-10. Execute action (e.g. SOL transfer)
+10. Execute action (TransferSol, TransferSpl, rotate, ChangePolicy, recover, …)
 
 State updates rely on Solana transaction atomicity: failure reverts all.
 Replay of a used intent fails because reconstruction binds the new nonce into
@@ -238,10 +247,12 @@ Ed25519 precompile — DualKey’s HybridAnd path is exercised end-to-end there.
 ## Module map
 
 ```text
-core/src/{lib,canonical,intent,policy,state,error}.rs
-program/src/{lib,instruction,processor,error}.rs
+core/src/{lib,canonical,intent,policy,state,recovery,wire,error}.rs
+program/src/{lib,instruction,processor,initialize,execute,authorize,
+             rotate,change_policy,recover,social_recovery,spl_token,
+             reconstruct,pda,hash,chain_domain,error}.rs
 program/src/auth/{mod,policy,ed25519,falcon}.rs
-client/src/{main,keygen,sign,intent,submit,error}.rs
+client/src/{main,keygen,sign,intent,onchain,submit,rpc,keys,error}.rs
 ```
 
 ## Security posture (summary)

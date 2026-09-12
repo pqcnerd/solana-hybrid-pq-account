@@ -1,10 +1,11 @@
-# Milestone 12 — RecoverAccount (project completion)
+# Milestone 12 — RecoverAccount
 
 **Goal:** wire the reserved `RecoverAccount` action and `FLAG_RECOVERY_ENABLED`
 so a DualKey vault can opt into Falcon-only Ed25519 recovery after a lost
-classical key — then mark the research milestone set complete.
+classical key.
 
-**Status:** complete.
+**Status:** complete. Later milestones (13–16) add CLI RPC, Token-2022 base
+transfers, social recovery, and polish — see [`STATUS.md`](STATUS.md).
 
 ---
 
@@ -48,16 +49,20 @@ ChangePolicy). Accounts: HybridAccount (writable), instructions sysvar.
 
 ---
 
-## 3. Project completion notes
+## 3. Historical note
 
-Milestones **0–11** delivered the planned DualKey research surface. Milestone
-**12** closes the last reserved action tag. Explicitly still out of scope for
-this research repo:
+At ship time, M12 closed the last reserved action tag in the original research
+set. Items that were deferred then and later shipped:
 
-- Token-2022 / transfer hooks
-- On-chain RPC broadcast in the CLI
-- Social recovery / guardians / timelocks
-- Formal verification or production audit
+| Item | Milestone |
+|------|-----------|
+| CLI RPC broadcast | [13](milestone-13.md) |
+| Token-2022 base TransferSpl | [14](milestone-14.md) |
+| Social recovery (guardian + timelock) | [15](milestone-15.md) |
+| Docs / CLI / localnet polish | [16](milestone-16.md) |
+
+Still never in scope: formal audit, “quantum proof”, full transfer-hook
+resolution, multi-guardian thresholds.
 
 ---
 
@@ -66,8 +71,5 @@ this research repo:
 ```bash
 unset CARGO_TARGET_DIR && export CARGO_TARGET_DIR="$PWD/target"
 cargo-build-sbf --manifest-path program/Cargo.toml
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets
-cargo test --workspace
-cargo test -p dualkey-client --release --test sbf_recover
+cargo test -p dualkey-client --test sbf_recover
 ```

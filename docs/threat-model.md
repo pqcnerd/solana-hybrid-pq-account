@@ -1,6 +1,7 @@
 # DualKey Threat Model
 
-**Status:** Milestone 0. Research / prototype — not a production security audit.
+**Status:** Current through Milestone 16. Research / prototype — not a production
+security audit.
 
 DualKey’s primary mode, **HybridAnd**, provides **defense in depth** across
 classical (Ed25519) and post-quantum (Falcon-512) signature families. If
@@ -105,23 +106,26 @@ This document does **not** claim formal security or quantum-proofness.
 
 ## Security invariants → mechanism → test
 
-| # | Invariant | Mechanism | Test (planned) |
-|--:|-----------|-----------|----------------|
-| 1 | Sig for account A cannot authorize B | `account` in preimage + PDA check | `wrong_vault.rs` |
-| 2 | Sig for program P cannot authorize Q | `program_id` in preimage | `wrong_program.rs` |
-| 3 | Cross-network replay limited | `chain_domain` constant | domain mismatch case |
-| 4 | One-bit intent change fails verify | Canonical digest binding | `altered_message.rs` |
-| 5 | Intent executes at most once | Nonce increment | `replay_of_the_same_signatures_is_rejected` (M6, done) |
-| 6 | Expired intent fails | `expiry_slot` vs clock | `expired_intent_is_rejected_before_authorization` (M6, done) |
-| 7 | HybridAnd needs Ed25519 | Policy eval | `hybrid_and_rejects_falcon_without_ed25519` (M5, done) |
-| 8 | HybridAnd needs Falcon | Policy eval | `hybrid_and_rejects_ed25519_without_falcon` (M5, done) |
-| 9 | No Falcon sk on-chain | Client-only keygen; account layout | `prepared_account_data_contains_no_secret_material` (M1, done) |
-| 10 | Same canonical intent | Shared `dualkey-core` preimage | `both_schemes_sign_exactly_the_same_digest` (M1, done) |
-| 11 | Amount immutable post-sign | Amount in action body | altered amount case |
-| 12 | Recipient immutable post-sign | Recipient in action body | altered recipient case |
-| 13 | Nonce immutable post-sign | Nonce in preimage | modified nonce case |
-| 14 | Policy changes authenticated | `ChangePolicy` under stricter-of | `sbf_policy.rs` (M10, done) |
-| 15 | Rotation cannot bypass old policy | Auth under current policy + PoP | `sbf_rotate.rs` (M9, done) |
+| # | Invariant | Mechanism | Test |
+|--:|-----------|-----------|------|
+| 1 | Sig for account A cannot authorize B | `account` in preimage + PDA check | `wrong_keys.rs`, SBF wrong-account paths |
+| 2 | Sig for program P cannot authorize Q | `program_id` in preimage | `sbf_reconstruct.rs` context mismatch |
+| 3 | Cross-network replay limited | `chain_domain` constant | reconstruct / domain fixtures |
+| 4 | One-bit intent change fails verify | Canonical digest binding | `digest_mutation.rs` |
+| 5 | Intent executes at most once | Nonce increment | `replay_of_the_same_signatures_is_rejected` (M6) |
+| 6 | Expired intent fails | `expiry_slot` vs clock | `expired_intent_is_rejected_before_authorization` (M6) |
+| 7 | HybridAnd needs Ed25519 | Policy eval | `hybrid_and_rejects_falcon_without_ed25519` (M5) |
+| 8 | HybridAnd needs Falcon | Policy eval | `hybrid_and_rejects_ed25519_without_falcon` (M5) |
+| 9 | No Falcon sk on-chain | Client-only keygen; account layout | `prepared_account_data_contains_no_secret_material` (M1) |
+| 10 | Same canonical intent | Shared `dualkey-core` preimage | `both_schemes_sign_exactly_the_same_digest` (M1) |
+| 11 | Amount immutable post-sign | Amount in action body | `digest_mutation` / SBF wrong dest |
+| 12 | Recipient / dest immutable post-sign | Bound in action body | `sbf_spl` / TransferSol dest checks |
+| 13 | Nonce immutable post-sign | Nonce in preimage | replay / wrong-nonce SBF |
+| 14 | Policy changes authenticated | `ChangePolicy` under stricter-of | `sbf_policy.rs` (M10) |
+| 15 | Rotation cannot bypass old policy | Auth under current policy + PoP | `sbf_rotate.rs` (M9) |
+| 16 | Falcon-only Ed recover is opt-in | `FLAG_RECOVERY_ENABLED` | `sbf_recover.rs` (M12) |
+| 17 | Social recover waits timelock | guardian propose + `delay_slots` | `sbf_social_recovery.rs` (M15) |
+| 18 | Token-2022 hooks refused | TLV TransferHook reject | `sbf_spl.rs` (M14) |
 
 ## Key material handling (Milestone 1, implemented)
 
