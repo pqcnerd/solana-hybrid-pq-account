@@ -143,7 +143,7 @@ movement. The account instructions return `Unimplemented`.
 | 5 | HybridAnd authorization | **Done** |
 | 6 | Replay protection + expiry | **Done** |
 | 7 | Hybrid-authorized SOL transfer | **Done** |
-| 8 | CU + transaction-size benchmarks | Pending |
+| 8 | CU + transaction-size benchmarks | **Done** |
 | 9 | Key rotation | Pending |
 | 10 | Richer policies | Pending |
 | 11 | SPL Token | Pending |
@@ -301,7 +301,7 @@ message telling you to.
 ## Test instructions
 
 ```bash
-# Everything (149 tests as of Milestone 7; needs the .so built first)
+# Everything (151 tests as of Milestone 8; needs the .so built first)
 cargo test --workspace
 
 # Shared types, layout, canonical encoding
@@ -321,6 +321,9 @@ cargo test -p dualkey-client --release --test sbf_reconstruct -- --nocapture
 
 # HybridAnd + replay/expiry + TransferSol (Milestones 5–7; needs mollusk precompiles)
 cargo test -p dualkey-client --release --test sbf_hybrid -- --nocapture
+
+# CU + legacy tx size matrix (Milestone 8)
+cargo test -p dualkey-client --release --test sbf_bench -- --nocapture
 
 # Signature length distribution soak (10,000 signatures)
 cargo test -p dualkey-client --release --test falcon_interop -- --ignored --nocapture
@@ -344,6 +347,7 @@ Test groups (all under `client/tests/`):
 | `sbf_initialize.rs` | SBF (M3) | HybridAccount PDA creation, on-chain Falcon key preparation, rejection paths, CU and rent |
 | `sbf_reconstruct.rs` | SBF (M4) | Intent reconstruction from trusted context + 49-byte wire; digest match; wrong context fails |
 | `sbf_hybrid.rs` | SBF (M5–M7) | HybridAnd / policies; nonce/replay/expiry; TransferSol + rent floor |
+| `sbf_bench.rs` | SBF (M8) | Policy CU matrix (9 samples); legacy tx size ≤ 1232 without ALT |
 
 The SBF tests live in `client/tests/` rather than `program/tests/` on purpose:
 it keeps every Falcon **signer** out of the program package's dependency graph,
@@ -351,8 +355,9 @@ even as a dev-dependency, and makes each test a genuine cross-layer check —
 the client signs with PQClean, the program verifies with `solana-falcon512`.
 
 On-chain attack/integration coverage so far: HybridAnd success/failure,
-replay, expiry, TransferSol / rent floor / wrong recipient (see `sbf_hybrid.rs`).
-Still planned: `wrong_program`, `wrong_vault`, `key_rotation`, LiteSVM tx-size (M8).
+replay, expiry, TransferSol / rent floor / wrong recipient (see `sbf_hybrid.rs`),
+plus CU/size benches (`sbf_bench.rs`). Still planned: `wrong_program`,
+`wrong_vault`, `key_rotation`.
 
 ## Benchmarks
 
@@ -390,14 +395,20 @@ Measured in Milestone 1 (host, 10,000 signatures) — see
 | On-chain wire signature buffer | 666 bytes (zero-padded) |
 | Signatures exceeding the buffer | 0 / 10,000 |
 
-DualKey measurements (fill at Milestone 8):
+DualKey measurements (Milestone 8 — Mollusk multi-ix tx CU, 9 samples;
+legacy `bincode` size). Full write-up: [`docs/milestone-8.md`](docs/milestone-8.md).
 
 | Metric | Ed25519Only | FalconOnly | HybridAnd |
 |--------|------------:|-----------:|----------:|
-| Auth CU (instruction) | — | — | — |
-| Auth CU (transaction) | — | — | — |
-| Tx size (bytes) | — | — | — |
+| Auth+transfer CU (median) | **3,208** | **185,034** | **185,495** |
+| Auth+transfer CU (min–max) | 3,207–3,208 | 175k–185k | 176k–186k |
+| Tx size (bytes) | **1,165** | **985** | **1,165** |
+| Headroom to 1232 | 67 | 247 | **67** |
 | Account data (bytes) | 1120 | 1120 | 1120 |
+
+**Legacy fit:** HybridAnd TransferSol is **1,165 / 1,232** bytes — fits **without**
+an Address Lookup Table. Marginal HybridAnd cost vs Ed25519Only is ~**182k CU**
+(Falcon-dominated). Well-formed Falcon rejections cost ~184k CU (DoS surface).
 
 Known sizes: Falcon sig 666 B · prepared pubkey 1024 B · account 1120 B ·
 canonical preimage 172 B.
@@ -424,6 +435,7 @@ Research questions guiding the work:
 - [`docs/milestone-2.md`](docs/milestone-2.md) — Falcon under SBF: measured CU, resolved open questions  
 - [`docs/milestone-6.md`](docs/milestone-6.md) — replay protection + expiry  
 - [`docs/milestone-7.md`](docs/milestone-7.md) — hybrid-authorized SOL transfer  
+- [`docs/milestone-8.md`](docs/milestone-8.md) — CU + legacy transaction size  
 - [`docs/threat-model.md`](docs/threat-model.md) — adversaries and invariants  
 - [`docs/benchmark-plan.md`](docs/benchmark-plan.md) — measurement plan  
 

@@ -187,12 +187,11 @@ Legacy limit: **1232 bytes**.
 | Ed25519 precompile ix | 144 |
 | DualKey execute ix (expiry+action+Falcon sig) | ~716 |
 | **Estimated total (reconstructed intent)** | **~1200** |
+| **Measured HybridAnd TransferSol (M8)** | **1,165** |
 | Full intent on wire (+96 B domains) | **~1300 (over limit)** |
 
-Headroom is tight (~26 B in the optimistic estimate). If measurements show
-overflow, fall back to v0 transactions with an Address Lookup Table.
-
-Details: [`canonical-intent.md`](canonical-intent.md).
+Measured headroom: **67 bytes** without an ALT. Details:
+[`milestone-8.md`](milestone-8.md), [`canonical-intent.md`](canonical-intent.md).
 
 ## Authorization policies
 
@@ -230,11 +229,11 @@ the signed action recipient.
 
 | Harness | Use |
 |---------|-----|
-| **LiteSVM** | Integration + attack tests (real tx pipeline, Ed25519 precompile, instructions sysvar, size limits) |
-| **Mollusk + bencher** | Instruction-level CU benchmarks with markdown baselines |
+| **Mollusk + `precompiles`** | Instruction and multi-ix CU; Ed25519 precompile + DualKey in one tx; size via legacy `Transaction` serialization (Milestone 8) |
+| **LiteSVM** | Optional fuller validator-shaped integration (not required for M8 figures) |
 
-Whether Mollusk populates the instructions sysvar / runs precompiles is an
-open question; attack tests are therefore LiteSVM-first.
+Mollusk with `precompiles` populates the instructions sysvar and runs the
+Ed25519 precompile — DualKey’s HybridAnd path is exercised end-to-end there.
 
 ## Module map
 

@@ -209,4 +209,4 @@ Changing any single bit of the preimage MUST invalidate both signatures.
 - [x] Cross-layer test: `sol_sha256` matches `TEST_VECTOR_DIGEST` (Milestone 2)
 - [x] On-chain field reconstruction (Milestone 4: harness 243 + `ExecuteIntentWire`)
 - [x] Compile-time `chain_domain` constants + program features (Milestone 4)
-- [ ] Measure serialized transaction size against the 1232-byte legacy limit (Milestone 8)
+- [x] Measure serialized transaction size against the 1232-byte legacy limit (Milestone 8: **1,165 B**, fits without ALT)

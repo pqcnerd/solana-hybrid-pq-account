@@ -62,5 +62,9 @@ mollusk-svm = { version = "0.15", features = ["precompiles"] }
 # `Account` and `ProgramError` types are identical, not merely similar.
 solana-account = "4.3"
 solana-program-error = "3.0"
+# Legacy transaction serialization for Milestone 8 size measurements.
+solana-transaction = { version = "4.1", features = ["serde"] }
+solana-signature = "3"
+bincode = "1"
 # Instruction discriminators, so renumbering the harness updates the tests.
 dualkey-program = { path = "../program" }

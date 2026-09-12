@@ -93,5 +93,5 @@ cargo test --workspace                          # 149 passed, 2 ignored
 cargo tree -p dualkey-program --all-features    # no pqcrypto-falcon
 ```
 
-Milestone 7 is complete. Milestone 8 (CU + transaction-size benchmarks) has not
-been started.
+Milestone 7 is complete. See [`docs/milestone-8.md`](milestone-8.md) for CU and
+legacy transaction-size benchmarks (Milestone 8).
