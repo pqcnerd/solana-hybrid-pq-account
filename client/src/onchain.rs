@@ -224,23 +224,27 @@ pub fn instructions_sysvar_id() -> Pubkey {
     Pubkey::from(solana_sdk_ids::sysvar::instructions::ID.to_bytes())
 }
 
-/// Build the `Execute` instruction.
+/// Build the `Execute` instruction (authorize + `TransferSol`).
 ///
-/// Accounts: HybridAccount (**writable**, nonce is consumed on success),
-/// instructions sysvar (readonly). The Ed25519 precompile must be the
-/// **immediately preceding** instruction in the same transaction when the
-/// policy requires Ed25519.
+/// Accounts: HybridAccount (**writable**), recipient (**writable**, must equal
+/// the signed action recipient), instructions sysvar (readonly). The Ed25519
+/// precompile must be the **immediately preceding** instruction in the same
+/// transaction when the policy requires Ed25519.
 pub fn execute_instruction(
     program_id: &Pubkey,
     hybrid_account: &Pubkey,
     intent: &AuthorizationIntent,
     falcon_sig: &[u8],
 ) -> Result<Instruction> {
+    let recipient = match intent.action {
+        dualkey_core::Action::TransferSol { recipient, .. } => Pubkey::new_from_array(recipient),
+    };
     let data = execute_data(intent, falcon_sig)?;
     Ok(Instruction {
         program_id: *program_id,
         accounts: vec![
             AccountMeta::new(*hybrid_account, false),
+            AccountMeta::new(recipient, false),
             AccountMeta::new_readonly(instructions_sysvar_id(), false),
         ],
         data,

@@ -66,14 +66,34 @@ enum Commands {
         #[arg(long)]
         out: Option<PathBuf>,
     },
-    /// Submit a hybrid-authorized SOL transfer (Milestone 7).
+    /// Build a HybridAnd-authorized SOL transfer (Milestone 7).
+    ///
+    /// Signs offline and prints the Ed25519 + Execute instruction pair.
+    /// Does not broadcast.
     Transfer {
+        /// Destination address (base58).
         #[arg(long)]
         to: String,
+        /// Lamports to transfer from the HybridAccount.
         #[arg(long)]
         lamports: u64,
         #[arg(long, default_value = "keys")]
         keys: PathBuf,
+        /// Deployed DualKey program address (base58).
+        #[arg(long)]
+        program_id: String,
+        /// HybridAccount PDA address (base58).
+        #[arg(long)]
+        account: String,
+        /// Current on-chain account nonce (must match when submitting).
+        #[arg(long)]
+        nonce: u64,
+        /// Last slot at which the intent is valid (inclusive).
+        #[arg(long)]
+        expiry_slot: u64,
+        /// Also write the artifact as JSON here.
+        #[arg(long)]
+        out: Option<PathBuf>,
     },
 }
 
@@ -107,7 +127,25 @@ fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
         },
-        Commands::Transfer { to, lamports, keys } => submit::transfer(&keys, &to, lamports),
+        Commands::Transfer {
+            to,
+            lamports,
+            keys,
+            program_id,
+            account,
+            nonce,
+            expiry_slot,
+            out,
+        } => submit::transfer(submit::TransferParams {
+            keys_dir: &keys,
+            program_id: &program_id,
+            hybrid_account: &account,
+            recipient: &to,
+            lamports,
+            nonce,
+            expiry_slot,
+            out: out.as_deref(),
+        }),
     };
 
     match result {

@@ -97,5 +97,5 @@ cargo test --workspace                          # 142 passed, 2 ignored
 cargo tree -p dualkey-program --all-features    # no pqcrypto-falcon
 ```
 
-Milestone 6 is complete. Milestone 7 (hybrid-authorized SOL transfer) has not
-been started.
+Milestone 6 is complete. See [`docs/milestone-7.md`](milestone-7.md) for
+hybrid-authorized SOL transfer (Milestone 7).

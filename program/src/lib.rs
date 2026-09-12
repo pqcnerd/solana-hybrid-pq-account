@@ -9,12 +9,9 @@
 //!
 //! Milestone 4 adds on-chain intent reconstruction (discriminator 243).
 //!
-//! Milestone 5 implements `Execute` authorization: reconstruct the intent,
-//! verify Ed25519 (precompile introspection) and/or Falcon under the account
-//! policy (HybridAnd requires both; never falls back).
-//!
-//! Milestone 6 adds expiry (Clock sysvar) and nonce consumption so a signed
-//! intent cannot be replayed. Value movement is still Milestone 7.
+//! Milestone 5–6 implement `Execute` authorization with expiry and nonce
+//! consumption. Milestone 7 executes `TransferSol` after a successful
+//! authorization.
 //!
 //! Falcon key generation and Falcon signing never happen here; this crate
 //! contains verification only, and `pqcrypto-falcon` is absent from its

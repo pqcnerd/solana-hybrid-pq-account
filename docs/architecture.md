@@ -218,11 +218,13 @@ Declared in `dualkey_core::AuthorizationPolicy`:
 7. Verify Falcon via prepared pubkey  
 8. Evaluate policy (reject on failure)  
 9. Increment nonce  
-10. Execute action (e.g. SOL transfer) — Milestone 7+
+10. Execute action (e.g. SOL transfer)
 
 State updates rely on Solana transaction atomicity: failure reverts all.
 Replay of a used intent fails because reconstruction binds the new nonce into
-the digest; signatures over the old digest no longer verify.
+the digest; signatures over the old digest no longer verify. `TransferSol`
+preserves the HybridAccount rent-exempt floor; the recipient account must match
+the signed action recipient.
 
 ## Test / benchmark harness split
 

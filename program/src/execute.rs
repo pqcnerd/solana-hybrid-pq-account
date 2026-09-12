@@ -1,9 +1,10 @@
-//! `Execute` — authorize an intent under the account's policy.
+//! `Execute` — authorize an intent under the account's policy, then act.
 //!
 //! Milestone 5: Ed25519 / Falcon / HybridAnd verification.
 //! Milestone 6: expiry against the Clock sysvar, and nonce consumption so a
-//! signed intent cannot be replayed. Still does **not** transfer lamports
-//! (Milestone 7).
+//! signed intent cannot be replayed.
+//! Milestone 7: `TransferSol` — move lamports from the HybridAccount PDA to the
+//! declared recipient while preserving the rent-exempt floor.
 //!
 //! ## Instruction data (716 bytes)
 //!
@@ -21,22 +22,24 @@
 //!
 //! | # | Account | |
 //! |---|---------|--|
-//! | 0 | `hybrid_account` | **writable** — nonce is incremented on success |
-//! | 1 | `instructions_sysvar` | readonly — for Ed25519 precompile introspection |
+//! | 0 | `hybrid_account` | **writable** — nonce bump + lamport debit |
+//! | 1 | `recipient` | **writable** — must equal the signed action recipient |
+//! | 2 | `instructions_sysvar` | readonly — Ed25519 precompile introspection |
 //!
 //! The Ed25519 signature is **not** in this instruction. It must appear as the
 //! immediately preceding Ed25519 precompile instruction in the same transaction,
 //! over the 32-byte reconstructed digest.
 
 use dualkey_core::{
-    AuthorizationPolicy, DualKeyError, ExecuteIntentWire, HybridAccount, EXECUTE_INTENT_WIRE_LEN,
-    FALCON_SIGNATURE_LEN,
+    Action, AuthorizationPolicy, DualKeyError, ExecuteIntentWire, HybridAccount, ACCOUNT_DATA_LEN,
+    EXECUTE_INTENT_WIRE_LEN, FALCON_SIGNATURE_LEN,
 };
 use solana_account_info::AccountInfo;
 use solana_clock::Clock;
 use solana_get_sysvar::GetSysvar;
 use solana_msg::msg;
 use solana_pubkey::Pubkey;
+use solana_rent::Rent;
 
 use crate::auth::ed25519::verify_ed25519_precompile;
 use crate::auth::falcon::verify_falcon_prepared;
@@ -51,12 +54,12 @@ pub const EXECUTE_DATA_LEN: usize = 1 + EXECUTE_PAYLOAD_LEN;
 
 const _: () = assert!(EXECUTE_DATA_LEN == 716);
 
-/// Authorize `payload` against the HybridAccount under its stored policy.
+/// Authorize `payload`, consume the nonce, then execute the signed action.
 ///
-/// On success the account nonce is incremented. A second submission of the same
-/// signatures then reconstructs a different digest (new nonce) and fails
-/// verification — that is the replay defense. Expiry is checked against
-/// `Clock::get().slot` before the expensive Falcon verify.
+/// Replay defense is the nonce bump: a second submission of the same signatures
+/// reconstructs a different digest and fails verification. Expiry is checked
+/// against `Clock::get().slot` before the expensive Falcon verify. The transfer
+/// runs only after a successful bump; Solana atomicity reverts both on failure.
 pub fn process(
     program_id: &Pubkey,
     accounts: &[AccountInfo],
@@ -66,11 +69,11 @@ pub fn process(
         return Err(DualKeyError::MalformedInstructionData);
     }
 
-    let [hybrid_account, instructions_sysvar] = accounts else {
+    let [hybrid_account, recipient, instructions_sysvar] = accounts else {
         return Err(DualKeyError::MalformedInstructionData);
     };
 
-    if !hybrid_account.is_writable {
+    if !hybrid_account.is_writable || !recipient.is_writable {
         return Err(DualKeyError::InvalidAccountData);
     }
 
@@ -78,6 +81,17 @@ pub fn process(
         .split_at_checked(EXECUTE_INTENT_WIRE_LEN)
         .ok_or(DualKeyError::MalformedInstructionData)?;
     let wire = ExecuteIntentWire::decode(wire_bytes)?;
+
+    let Action::TransferSol {
+        recipient: expected_recipient,
+        lamports,
+    } = wire.action;
+    if recipient.key.to_bytes() != expected_recipient {
+        return Err(DualKeyError::InvalidAccountData);
+    }
+    if recipient.key == hybrid_account.key {
+        return Err(DualKeyError::InvalidAccountData);
+    }
 
     // Expiry before crypto: a stale intent should fail cheaply. Inclusive bound
     // (`<=`) matches the intent field docs ("last slot at which this intent is
@@ -148,8 +162,8 @@ pub fn process(
 
     evaluate_policy(policy, sigs)?;
 
-    // Auth succeeded — consume the nonce. Solana transaction atomicity means
-    // this write reverts if anything later fails (Milestone 7 transfer).
+    // Auth succeeded — consume the nonce before moving value. Transaction
+    // atomicity reverts this write if the transfer below fails.
     {
         let mut data = hybrid_account
             .try_borrow_mut_data()
@@ -158,11 +172,52 @@ pub fn process(
         account.set_nonce(next_nonce);
     }
 
+    transfer_sol(hybrid_account, recipient, lamports)?;
+
     msg!(
-        "DualKey: authorization VALID ({}); nonce {} -> {}",
+        "DualKey: TransferSol {} lamports OK ({}); nonce {} -> {}",
+        lamports,
         policy.name(),
         account_nonce,
         next_nonce
     );
+    Ok(())
+}
+
+/// Debit `amount` from the program-owned HybridAccount and credit `recipient`.
+///
+/// Keeps the vault at or above the rent-exempt minimum for its fixed data
+/// length. Uses direct lamport mutation rather than a System CPI: the source is
+/// DualKey-owned, so the System program's transfer instruction does not apply.
+fn transfer_sol(
+    hybrid_account: &AccountInfo,
+    recipient: &AccountInfo,
+    amount: u64,
+) -> Result<(), DualKeyError> {
+    if amount == 0 {
+        return Ok(());
+    }
+
+    let rent_min = Rent::get()
+        .map_err(|_| DualKeyError::InvalidAccountData)?
+        .minimum_balance(ACCOUNT_DATA_LEN);
+
+    let remaining = hybrid_account
+        .lamports()
+        .checked_sub(amount)
+        .ok_or(DualKeyError::InsufficientFunds)?;
+    if remaining < rent_min {
+        return Err(DualKeyError::InsufficientFunds);
+    }
+
+    let mut from = hybrid_account
+        .try_borrow_mut_lamports()
+        .map_err(|_| DualKeyError::InvalidAccountData)?;
+    let mut to = recipient
+        .try_borrow_mut_lamports()
+        .map_err(|_| DualKeyError::InvalidAccountData)?;
+
+    **from = remaining;
+    **to = to.checked_add(amount).ok_or(DualKeyError::MathOverflow)?;
     Ok(())
 }

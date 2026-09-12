@@ -1,12 +1,13 @@
-//! Milestone 5–6: HybridAnd authorization + replay protection under Solana SBF.
+//! Milestone 5–7: HybridAnd authorization, replay/expiry, and TransferSol.
 //!
-//! Builds a real two-instruction transaction (Ed25519 precompile + DualKey
+//! Builds a real multi-instruction transaction (Ed25519 precompile + DualKey
 //! `Execute`) and runs it through Mollusk with the `precompiles` feature so the
 //! runtime actually verifies the Ed25519 signature. Falcon is verified by the
 //! DualKey program against the prepared key stored in the HybridAccount.
 //!
 //! Milestone 6 consumes the account nonce on success and rejects expired
-//! intents. Still no lamport transfer (Milestone 7).
+//! intents. Milestone 7 moves lamports to the signed recipient while preserving
+//! the rent-exempt floor.
 
 use dualkey_client::falcon_interop;
 use dualkey_client::keys::Ed25519Keypair;
@@ -27,8 +28,18 @@ use solana_pubkey::Pubkey;
 
 const PROGRAM_NAME: &str = "dualkey_program";
 
+/// Rent-exempt minimum for the fixed 1120-byte HybridAccount (Mollusk default rent).
+const RENT_EXEMPT_LAMPORTS: u64 = 8_686_080;
+
+/// Default transfer amount used by [`intent_for`].
+const TRANSFER_LAMPORTS: u64 = 1_000_000;
+
 fn program_id() -> Pubkey {
     Pubkey::new_from_array([7u8; 32])
+}
+
+fn recipient_pubkey() -> Pubkey {
+    Pubkey::new_from_array([0x44; 32])
 }
 
 fn mollusk() -> Mollusk {
@@ -100,8 +111,8 @@ fn intent_for(f: &Fixture) -> dualkey_core::AuthorizationIntent {
         f.nonce,
         50_000_000,
         Action::TransferSol {
-            recipient: [0x44; 32],
-            lamports: 1_000_000,
+            recipient: recipient_pubkey().to_bytes(),
+            lamports: TRANSFER_LAMPORTS,
         },
     )
 }
@@ -119,12 +130,29 @@ fn sign_both(
 }
 
 fn hybrid_account(f: &Fixture) -> (Pubkey, Account) {
+    hybrid_account_with_lamports(f, RENT_EXEMPT_LAMPORTS + TRANSFER_LAMPORTS + 1_000_000)
+}
+
+fn hybrid_account_with_lamports(f: &Fixture, lamports: u64) -> (Pubkey, Account) {
     (
         f.account,
         Account {
-            lamports: 10_000_000,
+            lamports,
             data: f.account_data.clone(),
             owner: program_id(),
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+}
+
+fn recipient() -> (Pubkey, Account) {
+    (
+        recipient_pubkey(),
+        Account {
+            lamports: 0,
+            data: vec![],
+            owner: onchain::system_program_id(),
             executable: false,
             rent_epoch: 0,
         },
@@ -182,9 +210,7 @@ fn hybrid_and_succeeds_with_both_signatures() {
 
     let result = {
         let (payer_key, payer_acct) = payer();
-        let accounts = vec![payer_key, hybrid_account(&f).0];
-        let keyed = vec![(payer_key, payer_acct), hybrid_account(&f)];
-        let _ = accounts;
+        let keyed = vec![(payer_key, payer_acct), hybrid_account(&f), recipient()];
         mollusk.process_and_validate_transaction_instructions(
             &[ed_ix, exec_ix],
             &keyed,
@@ -197,7 +223,7 @@ fn hybrid_and_succeeds_with_both_signatures() {
         "HybridAnd Execute: {} CU (tx total)",
         result.compute_units_consumed
     );
-    // Milestone 6: nonce is consumed on success.
+    // Milestone 6–7: nonce is consumed and lamports move on success.
     let after = result.get_account(&f.account).expect("account");
     let after_nonce = HybridAccount::nonce_from_slice(&after.data).unwrap();
     assert_eq!(
@@ -205,6 +231,13 @@ fn hybrid_and_succeeds_with_both_signatures() {
         f.nonce + 1,
         "successful Execute must bump nonce"
     );
+    assert_eq!(
+        after.lamports,
+        RENT_EXEMPT_LAMPORTS + 1_000_000,
+        "vault must debit the transfer amount"
+    );
+    let recv = result.get_account(&recipient_pubkey()).expect("recipient");
+    assert_eq!(recv.lamports, TRANSFER_LAMPORTS);
 }
 
 #[test]
@@ -224,7 +257,7 @@ fn ed25519_only_succeeds_without_valid_falcon() {
     run_tx(
         &mollusk,
         &[ed_ix, exec_ix],
-        &[hybrid_account(&f)],
+        &[hybrid_account(&f), recipient()],
         &[Check::success()],
     );
 }
@@ -245,7 +278,7 @@ fn falcon_only_succeeds_without_ed25519_precompile() {
     run_tx(
         &mollusk,
         &[exec_ix],
-        &[hybrid_account(&f)],
+        &[hybrid_account(&f), recipient()],
         &[Check::success()],
     );
 }
@@ -270,7 +303,7 @@ fn hybrid_and_rejects_ed25519_without_falcon() {
     run_tx(
         &mollusk,
         &[ed_ix, exec_ix],
-        &[hybrid_account(&f)],
+        &[hybrid_account(&f), recipient()],
         &[custom(DualKeyError::InvalidFalcon)],
     );
 }
@@ -290,7 +323,7 @@ fn hybrid_and_rejects_falcon_without_ed25519() {
     run_tx(
         &mollusk,
         &[exec_ix],
-        &[hybrid_account(&f)],
+        &[hybrid_account(&f), recipient()],
         &[custom(DualKeyError::MalformedEd25519Precompile)],
     );
 }
@@ -315,7 +348,7 @@ fn hybrid_and_rejects_ed25519_over_wrong_digest() {
     run_tx(
         &mollusk,
         &[ed_ix, exec_ix],
-        &[hybrid_account(&f)],
+        &[hybrid_account(&f), recipient()],
         &[custom(DualKeyError::InvalidEd25519)],
     );
     let _ = digest;
@@ -339,7 +372,7 @@ fn hybrid_and_rejects_wrong_ed25519_pubkey() {
     run_tx(
         &mollusk,
         &[ed_ix, exec_ix],
-        &[hybrid_account(&f)],
+        &[hybrid_account(&f), recipient()],
         &[custom(DualKeyError::InvalidEd25519)],
     );
 }
@@ -360,7 +393,7 @@ fn hybrid_and_rejects_tampered_falcon_signature() {
     run_tx(
         &mollusk,
         &[ed_ix, exec_ix],
-        &[hybrid_account(&f)],
+        &[hybrid_account(&f), recipient()],
         &[custom(DualKeyError::InvalidFalcon)],
     );
 }
@@ -387,7 +420,7 @@ fn unrelated_earlier_ed25519_is_not_accepted() {
     run_tx(
         &mollusk,
         &[good_ed, decoy, exec_ix],
-        &[hybrid_account(&f)],
+        &[hybrid_account(&f), recipient()],
         &[custom(DualKeyError::InvalidEd25519)],
     );
 }
@@ -414,7 +447,7 @@ fn wrong_nonce_in_intent_fails_digest_binding() {
         let (payer_key, payer_acct) = payer();
         mollusk.process_transaction_instructions(
             &[ed_ix, exec_ix],
-            &[(payer_key, payer_acct), hybrid_account(&f)],
+            &[(payer_key, payer_acct), hybrid_account(&f), recipient()],
             Some(&payer_key),
         )
     };
@@ -448,7 +481,7 @@ fn successful_execute_bumps_nonce_by_one() {
     let (payer_key, payer_acct) = payer();
     let result = mollusk.process_and_validate_transaction_instructions(
         &[exec_ix],
-        &[(payer_key, payer_acct), hybrid_account(&f)],
+        &[(payer_key, payer_acct), hybrid_account(&f), recipient()],
         &[Check::success()],
         Some(&payer_key),
     );
@@ -471,11 +504,16 @@ fn replay_of_the_same_signatures_is_rejected() {
     let (payer_key, payer_acct) = payer();
     let first = mollusk.process_and_validate_transaction_instructions(
         &[ed_ix.clone(), exec_ix.clone()],
-        &[(payer_key, payer_acct.clone()), hybrid_account(&f)],
+        &[
+            (payer_key, payer_acct.clone()),
+            hybrid_account(&f),
+            recipient(),
+        ],
         &[Check::success()],
         Some(&payer_key),
     );
     let after_first = first.get_account(&f.account).unwrap().clone();
+    let after_recipient = first.get_account(&recipient_pubkey()).unwrap().clone();
     assert_eq!(
         HybridAccount::nonce_from_slice(&after_first.data).unwrap(),
         1
@@ -485,7 +523,11 @@ fn replay_of_the_same_signatures_is_rejected() {
     // 1, digests no longer match the signatures over nonce 0.
     let second = mollusk.process_transaction_instructions(
         &[ed_ix, exec_ix],
-        &[(payer_key, payer_acct), (f.account, after_first)],
+        &[
+            (payer_key, payer_acct),
+            (f.account, after_first),
+            (recipient_pubkey(), after_recipient),
+        ],
         Some(&payer_key),
     );
     assert!(
@@ -511,7 +553,7 @@ fn expired_intent_is_rejected_before_authorization() {
     let (payer_key, payer_acct) = payer();
     let result = mollusk.process_and_validate_transaction_instructions(
         &[exec_ix],
-        &[(payer_key, payer_acct), hybrid_account(&f)],
+        &[(payer_key, payer_acct), hybrid_account(&f), recipient()],
         &[custom(DualKeyError::IntentExpired)],
         Some(&payer_key),
     );
@@ -540,7 +582,7 @@ fn intent_valid_on_exact_expiry_slot() {
     run_tx(
         &mollusk,
         &[exec_ix],
-        &[hybrid_account(&f)],
+        &[hybrid_account(&f), recipient()],
         &[Check::success()],
     );
 }
@@ -562,7 +604,7 @@ fn intent_expires_one_slot_after_expiry_slot() {
     run_tx(
         &mollusk,
         &[exec_ix],
-        &[hybrid_account(&f)],
+        &[hybrid_account(&f), recipient()],
         &[custom(DualKeyError::IntentExpired)],
     );
 }
@@ -583,7 +625,7 @@ fn failed_authorization_does_not_consume_nonce() {
     let (payer_key, payer_acct) = payer();
     let result = mollusk.process_and_validate_transaction_instructions(
         &[ed_ix, exec_ix],
-        &[(payer_key, payer_acct), hybrid_account(&f)],
+        &[(payer_key, payer_acct), hybrid_account(&f), recipient()],
         &[custom(DualKeyError::InvalidFalcon)],
         Some(&payer_key),
     );
@@ -609,7 +651,219 @@ fn max_nonce_refuses_to_authorize() {
     run_tx(
         &mollusk,
         &[exec_ix],
-        &[hybrid_account(&f)],
+        &[hybrid_account(&f), recipient()],
         &[custom(DualKeyError::MathOverflow)],
     );
+}
+
+// ---------------------------------------------------------------------------
+// Milestone 7: TransferSol
+// ---------------------------------------------------------------------------
+
+#[test]
+fn transfer_sol_moves_lamports_to_recipient() {
+    let mollusk = mollusk();
+    let f = fixture(AuthorizationPolicy::FalconOnly, 0);
+    let vault_before = RENT_EXEMPT_LAMPORTS + TRANSFER_LAMPORTS;
+    let intent = intent_for(&f);
+    let digest = canonical_digest(&intent);
+    let (_d, wire) = falcon_interop::sign_to_wire(&digest, &f.falcon_secret).unwrap();
+    let exec_ix =
+        onchain::execute_instruction(&program_id(), &f.account, &intent, wire.as_wire_bytes())
+            .unwrap();
+
+    let (payer_key, payer_acct) = payer();
+    let result = mollusk.process_and_validate_transaction_instructions(
+        &[exec_ix],
+        &[
+            (payer_key, payer_acct),
+            hybrid_account_with_lamports(&f, vault_before),
+            recipient(),
+        ],
+        &[Check::success()],
+        Some(&payer_key),
+    );
+
+    let vault = result.get_account(&f.account).unwrap();
+    let recv = result.get_account(&recipient_pubkey()).unwrap();
+    assert_eq!(vault.lamports, RENT_EXEMPT_LAMPORTS);
+    assert_eq!(recv.lamports, TRANSFER_LAMPORTS);
+    assert_eq!(HybridAccount::nonce_from_slice(&vault.data).unwrap(), 1);
+    println!(
+        "TransferSol: {} CU (tx total)",
+        result.compute_units_consumed
+    );
+}
+
+#[test]
+fn transfer_that_would_breach_rent_exempt_floor_is_rejected() {
+    let mollusk = mollusk();
+    let f = fixture(AuthorizationPolicy::FalconOnly, 1);
+    // Exactly rent-exempt: any positive transfer would leave the vault below rent.
+    let intent = intent_for(&f);
+    let digest = canonical_digest(&intent);
+    let (_d, wire) = falcon_interop::sign_to_wire(&digest, &f.falcon_secret).unwrap();
+    let exec_ix =
+        onchain::execute_instruction(&program_id(), &f.account, &intent, wire.as_wire_bytes())
+            .unwrap();
+
+    run_tx(
+        &mollusk,
+        &[exec_ix],
+        &[
+            hybrid_account_with_lamports(&f, RENT_EXEMPT_LAMPORTS),
+            recipient(),
+        ],
+        &[custom(DualKeyError::InsufficientFunds)],
+    );
+}
+
+#[test]
+fn transfer_down_to_exact_rent_exempt_floor_succeeds() {
+    let mollusk = mollusk();
+    let f = fixture(AuthorizationPolicy::FalconOnly, 2);
+    let intent = intent_for(&f);
+    let digest = canonical_digest(&intent);
+    let (_d, wire) = falcon_interop::sign_to_wire(&digest, &f.falcon_secret).unwrap();
+    let exec_ix =
+        onchain::execute_instruction(&program_id(), &f.account, &intent, wire.as_wire_bytes())
+            .unwrap();
+
+    let (payer_key, payer_acct) = payer();
+    let result = mollusk.process_and_validate_transaction_instructions(
+        &[exec_ix],
+        &[
+            (payer_key, payer_acct),
+            hybrid_account_with_lamports(&f, RENT_EXEMPT_LAMPORTS + TRANSFER_LAMPORTS),
+            recipient(),
+        ],
+        &[Check::success()],
+        Some(&payer_key),
+    );
+    assert_eq!(
+        result.get_account(&f.account).unwrap().lamports,
+        RENT_EXEMPT_LAMPORTS
+    );
+}
+
+#[test]
+fn insufficient_funds_does_not_consume_nonce() {
+    let mollusk = mollusk();
+    let f = fixture(AuthorizationPolicy::FalconOnly, 11);
+    let intent = intent_for(&f);
+    let digest = canonical_digest(&intent);
+    let (_d, wire) = falcon_interop::sign_to_wire(&digest, &f.falcon_secret).unwrap();
+    let exec_ix =
+        onchain::execute_instruction(&program_id(), &f.account, &intent, wire.as_wire_bytes())
+            .unwrap();
+
+    let (payer_key, payer_acct) = payer();
+    let result = mollusk.process_and_validate_transaction_instructions(
+        &[exec_ix],
+        &[
+            (payer_key, payer_acct),
+            hybrid_account_with_lamports(&f, RENT_EXEMPT_LAMPORTS),
+            recipient(),
+        ],
+        &[custom(DualKeyError::InsufficientFunds)],
+        Some(&payer_key),
+    );
+    // Auth succeeded and set_nonce ran in-program, but the failed transfer must
+    // revert the whole instruction — including the nonce write.
+    let after = result.get_account(&f.account).unwrap();
+    assert_eq!(
+        HybridAccount::nonce_from_slice(&after.data).unwrap(),
+        11,
+        "failed transfer must leave the nonce untouched"
+    );
+    assert_eq!(after.lamports, RENT_EXEMPT_LAMPORTS);
+}
+
+#[test]
+fn wrong_recipient_account_is_rejected() {
+    let mollusk = mollusk();
+    let f = fixture(AuthorizationPolicy::FalconOnly, 3);
+    let intent = intent_for(&f);
+    let digest = canonical_digest(&intent);
+    let (_d, wire) = falcon_interop::sign_to_wire(&digest, &f.falcon_secret).unwrap();
+    let exec_ix =
+        onchain::execute_instruction(&program_id(), &f.account, &intent, wire.as_wire_bytes())
+            .unwrap();
+
+    // Swap the recipient meta to a different writable account.
+    let mut bad_ix = exec_ix;
+    bad_ix.accounts[1].pubkey = Pubkey::new_from_array([0x99; 32]);
+    let wrong_recipient = (
+        Pubkey::new_from_array([0x99; 32]),
+        Account {
+            lamports: 0,
+            data: vec![],
+            owner: onchain::system_program_id(),
+            executable: false,
+            rent_epoch: 0,
+        },
+    );
+
+    run_tx(
+        &mollusk,
+        &[bad_ix],
+        &[hybrid_account(&f), wrong_recipient],
+        &[custom(DualKeyError::InvalidAccountData)],
+    );
+}
+
+#[test]
+fn zero_lamport_transfer_succeeds_without_moving_funds() {
+    let mollusk = mollusk();
+    let f = fixture(AuthorizationPolicy::FalconOnly, 4);
+    let mut intent = intent_for(&f);
+    intent.action = Action::TransferSol {
+        recipient: recipient_pubkey().to_bytes(),
+        lamports: 0,
+    };
+    let digest = canonical_digest(&intent);
+    let (_d, wire) = falcon_interop::sign_to_wire(&digest, &f.falcon_secret).unwrap();
+    let exec_ix =
+        onchain::execute_instruction(&program_id(), &f.account, &intent, wire.as_wire_bytes())
+            .unwrap();
+
+    let vault_before = RENT_EXEMPT_LAMPORTS + 500;
+    let (payer_key, payer_acct) = payer();
+    let result = mollusk.process_and_validate_transaction_instructions(
+        &[exec_ix],
+        &[
+            (payer_key, payer_acct),
+            hybrid_account_with_lamports(&f, vault_before),
+            recipient(),
+        ],
+        &[Check::success()],
+        Some(&payer_key),
+    );
+    assert_eq!(
+        result.get_account(&f.account).unwrap().lamports,
+        vault_before
+    );
+    assert_eq!(result.get_account(&recipient_pubkey()).unwrap().lamports, 0);
+    assert_eq!(
+        HybridAccount::nonce_from_slice(&result.get_account(&f.account).unwrap().data).unwrap(),
+        5
+    );
+}
+
+#[test]
+fn execute_accounts_include_writable_recipient() {
+    let f = fixture(AuthorizationPolicy::HybridAnd, 0);
+    let intent = intent_for(&f);
+    let ix = onchain::execute_instruction(
+        &program_id(),
+        &f.account,
+        &intent,
+        &[0u8; FALCON_SIGNATURE_LEN],
+    )
+    .unwrap();
+    assert_eq!(ix.accounts.len(), 3);
+    assert!(ix.accounts[0].is_writable);
+    assert_eq!(ix.accounts[1].pubkey, recipient_pubkey());
+    assert!(ix.accounts[1].is_writable);
+    assert!(!ix.accounts[2].is_writable);
 }
