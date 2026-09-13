@@ -20,10 +20,23 @@
 //!
 //! ## Accounts
 //!
+//! Enable / Disable:
+//!
 //! | # | Account | |
 //! |---|---------|--|
 //! | 0 | `hybrid_account` | writable |
 //! | 1 | instructions sysvar | readonly |
+//!
+//! `RotateEd25519`:
+//!
+//! | # | Account | |
+//! |---|---------|--|
+//! | 0 | `hybrid_account` | writable |
+//! | 1 | `recovery_config` PDA | writable (may be empty) |
+//! | 2 | instructions sysvar | readonly |
+//!
+//! A successful rotate clears any social-recovery pending so finalize cannot
+//! overwrite the new owner.
 
 use dualkey_core::{
     Action, DualKeyError, ExecuteIntentWire, HybridAccount, RecoveryOp, EXECUTE_INTENT_WIRE_LEN,
@@ -34,6 +47,7 @@ use solana_msg::msg;
 use solana_pubkey::Pubkey;
 
 use crate::authorize::{self, Authorization};
+use crate::social_recovery;
 
 /// Payload after discriminator (same as Execute).
 pub const RECOVER_PAYLOAD_LEN: usize = EXECUTE_INTENT_WIRE_LEN + FALCON_SIGNATURE_LEN;
@@ -53,13 +67,6 @@ pub fn process(
         return Err(DualKeyError::MalformedInstructionData);
     }
 
-    let [hybrid_account, instructions_sysvar] = accounts else {
-        return Err(DualKeyError::MalformedInstructionData);
-    };
-    if !hybrid_account.is_writable {
-        return Err(DualKeyError::InvalidAccountData);
-    }
-
     let (wire_bytes, falcon_sig) = authorize::split_wire_and_falcon(payload)?;
     let wire = ExecuteIntentWire::decode(wire_bytes)?;
 
@@ -69,11 +76,41 @@ pub fn process(
 
     match op {
         RecoveryOp::Enable | RecoveryOp::Disable => {
+            let [hybrid_account, instructions_sysvar] = accounts else {
+                return Err(DualKeyError::MalformedInstructionData);
+            };
+            if !hybrid_account.is_writable {
+                return Err(DualKeyError::InvalidAccountData);
+            }
             if new_ed25519 != [0u8; 32] {
                 return Err(DualKeyError::InvalidAccountData);
             }
+
+            let auth = authorize::authorize(
+                program_id,
+                hybrid_account,
+                instructions_sysvar,
+                &wire,
+                falcon_sig,
+            )?;
+            apply_recovery(hybrid_account, op, &new_ed25519, &auth)?;
+            msg!(
+                "DualKey: RecoverAccount {} OK ({}); nonce {} -> {}",
+                op_name(op),
+                auth.policy.name(),
+                auth.account_nonce,
+                auth.next_nonce
+            );
+            Ok(())
         }
         RecoveryOp::RotateEd25519 => {
+            let [hybrid_account, recovery_config, instructions_sysvar] = accounts else {
+                return Err(DualKeyError::MalformedInstructionData);
+            };
+            if !hybrid_account.is_writable {
+                return Err(DualKeyError::InvalidAccountData);
+            }
+
             let data = hybrid_account
                 .try_borrow_data()
                 .map_err(|_| DualKeyError::InvalidAccountData)?;
@@ -82,26 +119,30 @@ pub fn process(
             if new_ed25519 == current || new_ed25519 == [0u8; 32] {
                 return Err(DualKeyError::InvalidAccountData);
             }
+
+            let auth = authorize::authorize(
+                program_id,
+                hybrid_account,
+                instructions_sysvar,
+                &wire,
+                falcon_sig,
+            )?;
+            apply_recovery(hybrid_account, op, &new_ed25519, &auth)?;
+            social_recovery::clear_pending_after_ed25519_owner_change(
+                program_id,
+                hybrid_account.key,
+                recovery_config,
+            )?;
+            msg!(
+                "DualKey: RecoverAccount {} OK ({}); nonce {} -> {}",
+                op_name(op),
+                auth.policy.name(),
+                auth.account_nonce,
+                auth.next_nonce
+            );
+            Ok(())
         }
     }
-
-    let auth = authorize::authorize(
-        program_id,
-        hybrid_account,
-        instructions_sysvar,
-        &wire,
-        falcon_sig,
-    )?;
-
-    apply_recovery(hybrid_account, op, &new_ed25519, &auth)?;
-    msg!(
-        "DualKey: RecoverAccount {} OK ({}); nonce {} -> {}",
-        op_name(op),
-        auth.policy.name(),
-        auth.account_nonce,
-        auth.next_nonce
-    );
-    Ok(())
 }
 
 fn op_name(op: RecoveryOp) -> &'static str {

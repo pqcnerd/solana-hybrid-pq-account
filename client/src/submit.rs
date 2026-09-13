@@ -240,21 +240,7 @@ pub fn transfer(params: TransferParams<'_>) -> Result<()> {
     let ed = Ed25519Keypair::load(&paths)?;
     let falcon = FalconKeypair::load(&paths)?;
 
-    let nonce = match nonce {
-        Some(n) => n,
-        None => {
-            let (url, _) =
-                broadcast
-                    .require_for_broadcast()
-                    .map_err(|_| ClientError::IntentFormat {
-                        path: "nonce".into(),
-                        reason:
-                            "--nonce is required unless --broadcast --rpc-url is set (reads chain)"
-                                .into(),
-                    })?;
-            Rpc::new(url).get_hybrid_nonce(&hybrid_account)?
-        }
-    };
+    let nonce = resolve_nonce(&hybrid_account, nonce, &broadcast)?;
 
     let intent = onchain::signing_intent(
         &program_id,
@@ -325,13 +311,15 @@ fn resolve_nonce(hybrid: &Pubkey, nonce: Option<u64>, broadcast: &BroadcastOpts)
     match nonce {
         Some(n) => Ok(n),
         None => {
-            let (url, _) =
-                broadcast
-                    .require_for_broadcast()
-                    .map_err(|_| ClientError::IntentFormat {
-                        path: "nonce".into(),
-                        reason: "--nonce required unless --broadcast --rpc-url is set".into(),
-                    })?;
+            // Chain read needs only --rpc-url (no --broadcast / --payer).
+            let url = broadcast
+                .rpc_url
+                .as_deref()
+                .ok_or_else(|| ClientError::IntentFormat {
+                    path: "nonce".into(),
+                    reason: "--nonce required unless --rpc-url is set (reads HybridAccount nonce)"
+                        .into(),
+                })?;
             Rpc::new(url).get_hybrid_nonce(hybrid)
         }
     }
@@ -430,7 +418,9 @@ pub fn recover_enable(params: LifecycleParams<'_>) -> Result<()> {
             op: RecoveryOp::Enable,
             new_ed25519: [0u8; 32],
         },
-        onchain::recover_account_instruction,
+        |program_id, hybrid, intent, falcon| {
+            onchain::recover_account_instruction(program_id, hybrid, intent, falcon, None)
+        },
     )
 }
 
@@ -441,29 +431,134 @@ pub fn recover_disable(params: LifecycleParams<'_>) -> Result<()> {
             op: RecoveryOp::Disable,
             new_ed25519: [0u8; 32],
         },
-        onchain::recover_account_instruction,
+        |program_id, hybrid, intent, falcon| {
+            onchain::recover_account_instruction(program_id, hybrid, intent, falcon, None)
+        },
     )
 }
 
 pub fn recover_rotate_ed25519(params: LifecycleParams<'_>, new_owner: &str) -> Result<()> {
+    // On-chain this is Falcon-only (lost-Ed25519 escape hatch). Do not load or
+    // sign with ed25519.sk — the owner key may be gone.
     let new_ed25519 = parse_pubkey("new-owner", new_owner)?.to_bytes();
-    sign_lifecycle(
-        &params,
+    let program_id = parse_pubkey("program_id", params.program_id)?;
+    let hybrid_account = parse_pubkey("account", params.hybrid_account)?;
+    let (recovery_config, _) = onchain::derive_recovery_config(&program_id, &hybrid_account)?;
+    let falcon = FalconKeypair::load(&KeyPaths::new(params.keys_dir))?;
+    let nonce = resolve_nonce(&hybrid_account, params.nonce, &params.broadcast)?;
+
+    let intent = onchain::signing_intent(
+        &program_id,
+        &hybrid_account,
+        nonce,
+        params.expiry_slot,
         Action::RecoverAccount {
             op: RecoveryOp::RotateEd25519,
             new_ed25519,
         },
-        onchain::recover_account_instruction,
-    )
+    );
+    let digest = canonical_digest(&intent);
+    let (_pq, wire) = falcon_interop::sign_to_wire(&digest, falcon.secret())?;
+    let ix = onchain::recover_account_instruction(
+        &program_id,
+        &hybrid_account,
+        &intent,
+        wire.as_wire_bytes(),
+        Some(&recovery_config),
+    )?;
+
+    let mut signature = None;
+    if params.broadcast.broadcast {
+        let (url, payer_path) = params.broadcast.require_for_broadcast()?;
+        let rpc = Rpc::new(url);
+        let payer = rpc::load_payer(payer_path)?;
+        signature = Some(rpc::send_instructions(
+            &rpc,
+            &payer,
+            std::slice::from_ref(&ix),
+        )?);
+    }
+
+    print_submit_result(&digest, nonce, ix.data.len(), &signature);
+    println!("RecoveryConfig: {recovery_config}");
+    if let Some(path) = params.out {
+        let json = serde_json::json!({
+            "digest": hex::encode(digest),
+            "nonce": nonce,
+            "recovery_config": recovery_config.to_string(),
+            "instruction_data_hex": hex::encode(&ix.data),
+            "signature": signature,
+        });
+        crate::keys::write_with_mode(
+            path,
+            &serde_json::to_vec_pretty(&json)?,
+            crate::keys::PUBLIC_MODE,
+        )?;
+        println!("Artifact written to {}", path.display());
+    }
+    Ok(())
 }
 
 pub fn rotate_ed25519(params: LifecycleParams<'_>, new_owner: &str) -> Result<()> {
     let new_pubkey = parse_pubkey("new-owner", new_owner)?.to_bytes();
-    sign_lifecycle(
-        &params,
+    let program_id = parse_pubkey("program_id", params.program_id)?;
+    let hybrid_account = parse_pubkey("account", params.hybrid_account)?;
+    let (recovery_config, _) = onchain::derive_recovery_config(&program_id, &hybrid_account)?;
+    let paths = KeyPaths::new(params.keys_dir);
+    let ed = Ed25519Keypair::load(&paths)?;
+    let falcon = FalconKeypair::load(&paths)?;
+    let nonce = resolve_nonce(&hybrid_account, params.nonce, &params.broadcast)?;
+
+    let intent = onchain::signing_intent(
+        &program_id,
+        &hybrid_account,
+        nonce,
+        params.expiry_slot,
         Action::RotateEd25519Key { new_pubkey },
-        onchain::rotate_ed25519_instruction,
-    )
+    );
+    let digest = canonical_digest(&intent);
+    let ed_sig = ed.signing_key().sign(&digest).to_bytes();
+    let (_pq, wire) = falcon_interop::sign_to_wire(&digest, falcon.secret())?;
+    let ed_ix = onchain::ed25519_precompile_instruction(&digest, &ed_sig, &ed.public_bytes());
+    let ix = onchain::rotate_ed25519_instruction(
+        &program_id,
+        &hybrid_account,
+        &recovery_config,
+        &intent,
+        wire.as_wire_bytes(),
+    )?;
+
+    let mut signature = None;
+    if params.broadcast.broadcast {
+        let (url, payer_path) = params.broadcast.require_for_broadcast()?;
+        let rpc = Rpc::new(url);
+        let payer = rpc::load_payer(payer_path)?;
+        signature = Some(rpc::send_instructions(
+            &rpc,
+            &payer,
+            &[ed_ix.clone(), ix.clone()],
+        )?);
+    }
+
+    print_submit_result(&digest, nonce, ix.data.len(), &signature);
+    println!("RecoveryConfig: {recovery_config}");
+    if let Some(path) = params.out {
+        let json = serde_json::json!({
+            "digest": hex::encode(digest),
+            "nonce": nonce,
+            "recovery_config": recovery_config.to_string(),
+            "ed25519_precompile_data_hex": hex::encode(&ed_ix.data),
+            "instruction_data_hex": hex::encode(&ix.data),
+            "signature": signature,
+        });
+        crate::keys::write_with_mode(
+            path,
+            &serde_json::to_vec_pretty(&json)?,
+            crate::keys::PUBLIC_MODE,
+        )?;
+        println!("Artifact written to {}", path.display());
+    }
+    Ok(())
 }
 
 /// Rotate the Falcon public key under the current policy (with PoP).
@@ -612,7 +707,8 @@ pub fn social_set_config(
             println!("Artifact written to {}", path.display());
         }
     } else {
-        // Offline: use a placeholder payer pubkey (must match when broadcasting).
+        // Offline: placeholder payer in account metas only. Payer is not bound into
+        // the DualKey intent/signatures — rebuild metas with a real payer to submit.
         let placeholder = Pubkey::new_from_array([0u8; 32]);
         let ix = onchain::set_recovery_config_instruction(
             &program_id,
@@ -624,7 +720,10 @@ pub fn social_set_config(
         )?;
         print_submit_result(&digest, nonce, ix.data.len(), &None);
         println!("RecoveryConfig: {recovery_config}");
-        println!("Note: offline artifact uses zero payer; rebuild with --broadcast.");
+        println!(
+            "Note: offline artifact uses zero payer in account metas only; \
+             DualKey signatures remain valid — rebuild metas with a real payer to submit."
+        );
         if let Some(path) = params.out {
             let json = serde_json::json!({
                 "digest": hex::encode(digest),
@@ -660,19 +759,7 @@ pub fn social_initiate(
     let (recovery_config, _) = onchain::derive_recovery_config(&program_id, &hybrid_account)?;
     let guardian = Ed25519Keypair::load(&KeyPaths::new(guardian_keys))?;
 
-    let nonce = match nonce {
-        Some(n) => n,
-        None => {
-            let (url, _) =
-                broadcast
-                    .require_for_broadcast()
-                    .map_err(|_| ClientError::IntentFormat {
-                        path: "nonce".into(),
-                        reason: "--nonce required unless --broadcast --rpc-url is set".into(),
-                    })?;
-            Rpc::new(url).get_hybrid_nonce(&hybrid_account)?
-        }
-    };
+    let nonce = resolve_nonce(&hybrid_account, nonce, broadcast)?;
 
     let digest = dualkey_core::social_recover_digest(
         &dualkey_core::CHAIN_DOMAIN_LOCALNET,

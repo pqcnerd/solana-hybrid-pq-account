@@ -24,7 +24,8 @@ struct RpcArgs {
     /// Submit the built transaction to a cluster (default: print artifacts only).
     #[arg(long, default_value_t = false)]
     broadcast: bool,
-    /// Solana JSON-RPC URL (required with `--broadcast`).
+    /// Solana JSON-RPC URL (required with `--broadcast`; also used to read
+    /// HybridAccount nonce when `--nonce` is omitted).
     #[arg(long)]
     rpc_url: Option<String>,
     /// Payer keypair JSON path (required with `--broadcast`). Never printed.
@@ -110,7 +111,7 @@ enum Commands {
         /// HybridAccount PDA address (base58).
         #[arg(long)]
         account: String,
-        /// Current on-chain nonce. Omit with `--broadcast` to read from chain.
+        /// Current on-chain nonce. Omit when `--rpc-url` is set to read from chain.
         #[arg(long)]
         nonce: Option<u64>,
         /// Last slot at which the intent is valid (inclusive).
@@ -225,9 +226,8 @@ enum Commands {
     },
     /// Social recovery (guardian + timelock, Milestone 15).
     ///
-    /// Prerequisite: `dualkey recover enable`, then `social set-config`, then
-    /// initiate / finalize / cancel. Initiate/finalize/cancel require
-    /// `FLAG_RECOVERY_ENABLED` on-chain.
+    /// Prerequisite: `social set-config`, then `recover enable` before
+    /// initiate / finalize / cancel (flag required for those three only).
     Social {
         #[command(subcommand)]
         op: SocialCmd,
@@ -236,7 +236,7 @@ enum Commands {
 
 #[derive(Subcommand, Debug)]
 enum SocialCmd {
-    /// Set / replace guardian Ed25519 + delay_slots (after `recover enable`).
+    /// Set / replace guardian Ed25519 + delay_slots (does not require recovery flag).
     SetConfig {
         #[arg(long, default_value = "keys")]
         keys: PathBuf,
@@ -342,7 +342,7 @@ enum RecoverCmd {
         #[command(flatten)]
         rpc: RpcArgs,
     },
-    /// Rotate Ed25519 owner with Falcon alone (requires recovery enabled).
+    /// Rotate Ed25519 owner with Falcon alone (requires recovery enabled; no ed25519.sk).
     RotateEd25519 {
         #[arg(long, default_value = "keys")]
         keys: PathBuf,

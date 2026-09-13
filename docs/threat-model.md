@@ -64,7 +64,7 @@ This document does **not** claim formal security or quantum-proofness.
 |--------|------------|
 | Malformed Falcon signatures | `try_from_slice` + verify returns false → `InvalidFalcon` / `MalformedFalcon` |
 | Oversized signatures | Fixed 666-byte buffer; reject wrong lengths |
-| Unverifiable Falcon pubkey registration | Any parsable 897-byte buffer can be “prepared”; under HybridAnd a bogus key **bricks** the account. Require Falcon **proof-of-possession** at init and on `RotateFalconKey` for the *new* key |
+| Unverifiable Falcon pubkey registration | Any parsable 897-byte buffer can be “prepared”; under HybridAnd a bogus key **bricks** the account. `RotateFalconKey` requires Falcon **proof-of-possession** for the *new* key (init prepares/hashes only — no PoP at Initialize) |
 | Never dedup by signature value | Falcon nonces make signatures non-unique; replay protection is the **nonce counter**, never a signature-set |
 | Non-zero signature padding | `solana-falcon512` requires all trailing bytes past the encoded signature to be zero; verified by `non_zero_padding_is_rejected` |
 | Signature length overrun | Compressed signatures are variable (647–663 observed over 10,000 samples, spec-bounded at 666). Oversized signatures are **rejected, never truncated**; the client re-signs. See [`falcon-interop.md`](falcon-interop.md) |
@@ -83,12 +83,13 @@ This document does **not** claim formal security or quantum-proofness.
 | Threat | Mitigation |
 |--------|------------|
 | Downgrade HybridAnd → Ed25519Only | `ChangePolicy` authorized under the **stricter** of current and target policies so a stolen Ed25519 key alone cannot disable Falcon |
-| Malicious key rotation | Rotation intents authenticated under current policy; new Falcon key needs PoP; nonce advances |
+| Malicious key rotation | Rotation intents authenticated under current policy; new Falcon key needs PoP on `RotateFalconKey`; nonce advances |
+| Falcon-admin policies (`FalconForPrivileged`, `FalconAboveThreshold`) | Falcon alone can `RotateEd25519Key` (privileged) then transfer under the new Ed owner — accepted risk of Falcon-as-admin; prefer HybridAnd when two-scheme depth is required |
 | Lost Ed25519 with recovery enabled | Opt-in `RecoverAccount::RotateEd25519` allows Falcon alone to install a new Ed owner; enabling the flag itself requires current-policy auth |
 | Stolen Falcon while recovery enabled | Can rotate Ed25519 owner — operators should disable recovery when unused |
-| Compromised social-recovery guardian | Can only *propose* a new Ed owner; finalize waits `delay_slots`; DualKey owner can `CancelSocialRecovery` under current policy before the timelock elapses |
+| Compromised social-recovery guardian | Can only *propose* a new Ed owner; re-initiate while pending is rejected (cancel first); finalize waits `delay_slots` (≥1); DualKey owner can `CancelSocialRecovery` under current policy before the timelock elapses; any successful Ed25519 owner change (`RotateEd25519Key` / Falcon `RecoverAccount::RotateEd25519`) clears pending so finalize cannot overwrite |
 | Token-2022 transfer-hook mint/account | DualKey refuses TransferHook / TransferHookAccount TLV extensions; no hook CPI resolution (base Token-2022 transfers only) |
-| Nonce desynchronization | Client reads on-chain nonce before signing (CLI `--broadcast` path) or requires explicit `--nonce`; failed txs do not advance nonce |
+| Nonce desynchronization | Client reads on-chain nonce before signing when `--rpc-url` is set (or requires explicit `--nonce`); failed txs do not advance nonce |
 | Policy not implemented / fallback | Unreachable modes return `PolicyNotImplemented`; HybridAnd never falls back |
 
 ### Availability / resource

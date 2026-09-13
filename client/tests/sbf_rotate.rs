@@ -105,6 +105,26 @@ fn hybrid_account(f: &Fixture) -> (Pubkey, Account) {
     )
 }
 
+fn empty_recovery_config(hybrid: &Pubkey) -> (Pubkey, Account) {
+    let (addr, _) = onchain::derive_recovery_config(&program_id(), hybrid).unwrap();
+    (
+        addr,
+        Account {
+            lamports: 1_000_000,
+            data: vec![],
+            owner: onchain::system_program_id(),
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+}
+
+fn recovery_pda(hybrid: &Pubkey) -> Pubkey {
+    onchain::derive_recovery_config(&program_id(), hybrid)
+        .unwrap()
+        .0
+}
+
 fn payer() -> (Pubkey, Account) {
     (
         Pubkey::new_from_array([0x01; 32]),
@@ -180,15 +200,21 @@ fn rotate_ed25519_under_hybrid_and_updates_owner() {
     let falcon = falcon_sig(&digest, &f.falcon_secret);
 
     let ed_ix = onchain::ed25519_precompile_instruction(&digest, &ed_sig, &f.ed.public_bytes());
-    let rot_ix =
-        onchain::rotate_ed25519_instruction(&program_id(), &f.account, &intent, &falcon).unwrap();
+    let rot_ix = onchain::rotate_ed25519_instruction(
+        &program_id(),
+        &f.account,
+        &recovery_pda(&f.account),
+        &intent,
+        &falcon,
+    )
+    .unwrap();
     assert_eq!(rot_ix.data.len(), onchain::EXECUTE_DATA_LEN);
     assert_eq!(rot_ix.data[0], onchain::ROTATE_ED25519_DISCRIMINATOR);
 
     let after = run_tx_result(
         &mollusk,
         &[ed_ix, rot_ix],
-        &[hybrid_account(&f)],
+        &[hybrid_account(&f), empty_recovery_config(&f.account)],
         &[Check::success()],
     );
     assert_eq!(HybridAccount::nonce_from_slice(&after.data).unwrap(), 4);
@@ -218,13 +244,19 @@ fn rotate_ed25519_rejects_same_pubkey() {
     );
     let digest = canonical_digest(&intent);
     let falcon = falcon_sig(&digest, &f.falcon_secret);
-    let rot_ix =
-        onchain::rotate_ed25519_instruction(&program_id(), &f.account, &intent, &falcon).unwrap();
+    let rot_ix = onchain::rotate_ed25519_instruction(
+        &program_id(),
+        &f.account,
+        &recovery_pda(&f.account),
+        &intent,
+        &falcon,
+    )
+    .unwrap();
 
     run_tx(
         &mollusk,
         &[rot_ix],
-        &[hybrid_account(&f)],
+        &[hybrid_account(&f), empty_recovery_config(&f.account)],
         &[custom(DualKeyError::InvalidAccountData)],
     );
 }
@@ -246,13 +278,19 @@ fn rotate_ed25519_requires_current_policy_auth() {
     let digest = canonical_digest(&intent);
     // Only Falcon — HybridAnd must not fall back.
     let falcon = falcon_sig(&digest, &f.falcon_secret);
-    let rot_ix =
-        onchain::rotate_ed25519_instruction(&program_id(), &f.account, &intent, &falcon).unwrap();
+    let rot_ix = onchain::rotate_ed25519_instruction(
+        &program_id(),
+        &f.account,
+        &recovery_pda(&f.account),
+        &intent,
+        &falcon,
+    )
+    .unwrap();
 
     run_tx(
         &mollusk,
         &[rot_ix],
-        &[hybrid_account(&f)],
+        &[hybrid_account(&f), empty_recovery_config(&f.account)],
         &[custom(DualKeyError::MalformedEd25519Precompile)],
     );
 }
@@ -455,14 +493,19 @@ fn after_ed25519_rotation_old_key_cannot_authorize_transfer() {
     let ed_sig = f.ed.signing_key().sign(&digest).to_bytes();
     let falcon = [0xABu8; FALCON_SIGNATURE_LEN];
     let ed_ix = onchain::ed25519_precompile_instruction(&digest, &ed_sig, &f.ed.public_bytes());
-    let rot_ix =
-        onchain::rotate_ed25519_instruction(&program_id(), &f.account, &rotate_intent, &falcon)
-            .unwrap();
+    let rot_ix = onchain::rotate_ed25519_instruction(
+        &program_id(),
+        &f.account,
+        &recovery_pda(&f.account),
+        &rotate_intent,
+        &falcon,
+    )
+    .unwrap();
 
     let after = run_tx_result(
         &mollusk,
         &[ed_ix, rot_ix],
-        &[hybrid_account(&f)],
+        &[hybrid_account(&f), empty_recovery_config(&f.account)],
         &[Check::success()],
     );
 

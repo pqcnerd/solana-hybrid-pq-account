@@ -296,7 +296,7 @@ cargo run -p dualkey-client -- transfer \
 # Also: transfer-spl, change-policy, rotate-ed25519, recover {…},
 # social {set-config,initiate,finalize,cancel} (after `recover enable`).
 # rotate-falcon: offline/--out only (legacy --broadcast cannot fit ~2279 B ix).
-# Omit --nonce only with --broadcast --rpc-url --payer (CLI reads chain nonce).
+# Omit --nonce when --rpc-url is set (CLI reads chain nonce); --broadcast still needs --payer.
 ```
 
 One-shot localnet smoke: `PROGRAM_ID=… PAYER=… ./scripts/demo-localnet.sh`.

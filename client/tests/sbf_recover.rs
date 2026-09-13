@@ -103,6 +103,26 @@ fn hybrid_account(f: &Fixture) -> (Pubkey, Account) {
     )
 }
 
+fn empty_recovery_config(hybrid: &Pubkey) -> (Pubkey, Account) {
+    let (addr, _) = onchain::derive_recovery_config(&program_id(), hybrid).unwrap();
+    (
+        addr,
+        Account {
+            lamports: 1_000_000,
+            data: vec![],
+            owner: onchain::system_program_id(),
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+}
+
+fn recovery_pda(hybrid: &Pubkey) -> Pubkey {
+    onchain::derive_recovery_config(&program_id(), hybrid)
+        .unwrap()
+        .0
+}
+
 fn payer() -> (Pubkey, Account) {
     (
         Pubkey::new_from_array([0x01; 32]),
@@ -184,7 +204,8 @@ fn enable_recovery_under_hybrid_and() {
 
     let ed_ix = onchain::ed25519_precompile_instruction(&digest, &ed_sig, &f.ed.public_bytes());
     let ix =
-        onchain::recover_account_instruction(&program_id(), &f.account, &intent, &falcon).unwrap();
+        onchain::recover_account_instruction(&program_id(), &f.account, &intent, &falcon, None)
+            .unwrap();
     assert_eq!(ix.data[0], onchain::RECOVER_ACCOUNT_DISCRIMINATOR);
 
     let after = run_tx_result(
@@ -206,12 +227,18 @@ fn rotate_ed25519_without_recovery_flag_is_rejected() {
     let digest = canonical_digest(&intent);
     let falcon = falcon_sig(&digest, &f.falcon_secret);
 
-    let ix =
-        onchain::recover_account_instruction(&program_id(), &f.account, &intent, &falcon).unwrap();
+    let ix = onchain::recover_account_instruction(
+        &program_id(),
+        &f.account,
+        &intent,
+        &falcon,
+        Some(&recovery_pda(&f.account)),
+    )
+    .unwrap();
     run_tx(
         &mollusk,
         &[ix],
-        &[hybrid_account(&f)],
+        &[hybrid_account(&f), empty_recovery_config(&f.account)],
         &[custom(DualKeyError::InvalidAccountData)],
     );
 }
@@ -226,9 +253,20 @@ fn falcon_alone_recovers_ed25519_when_flag_set() {
     let falcon = falcon_sig(&digest, &f.falcon_secret);
 
     // No Ed25519 precompile — Falcon alone must succeed.
-    let ix =
-        onchain::recover_account_instruction(&program_id(), &f.account, &intent, &falcon).unwrap();
-    let after = run_tx_result(&mollusk, &[ix], &[hybrid_account(&f)], &[Check::success()]);
+    let ix = onchain::recover_account_instruction(
+        &program_id(),
+        &f.account,
+        &intent,
+        &falcon,
+        Some(&recovery_pda(&f.account)),
+    )
+    .unwrap();
+    let after = run_tx_result(
+        &mollusk,
+        &[ix],
+        &[hybrid_account(&f), empty_recovery_config(&f.account)],
+        &[Check::success()],
+    );
     assert_eq!(
         HybridAccount::owner_ed25519_from_slice(&after.data).unwrap(),
         new_ed.public_bytes()
@@ -251,13 +289,14 @@ fn recovery_rotate_rejects_ed25519_alone_even_with_flag() {
         &f.account,
         &intent,
         &[0u8; FALCON_SIGNATURE_LEN],
+        Some(&recovery_pda(&f.account)),
     )
     .unwrap();
 
     run_tx(
         &mollusk,
         &[ed_ix, ix],
-        &[hybrid_account(&f)],
+        &[hybrid_account(&f), empty_recovery_config(&f.account)],
         &[custom(DualKeyError::InvalidFalcon)],
     );
 }
@@ -271,7 +310,8 @@ fn disable_recovery_clears_flag() {
     let falcon = falcon_sig(&digest, &f.falcon_secret);
 
     let ix =
-        onchain::recover_account_instruction(&program_id(), &f.account, &intent, &falcon).unwrap();
+        onchain::recover_account_instruction(&program_id(), &f.account, &intent, &falcon, None)
+            .unwrap();
     let after = run_tx_result(&mollusk, &[ix], &[hybrid_account(&f)], &[Check::success()]);
     assert!(!HybridAccount::recovery_enabled_from_slice(&after.data).unwrap());
 }

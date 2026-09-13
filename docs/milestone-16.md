@@ -10,8 +10,9 @@
 - CLI: all six policies in help; subcommands for `change-policy`,
   `rotate-ed25519`, `rotate-falcon` (offline/`--out` only — legacy `--broadcast`
   cannot fit the ~2279-byte ix), `recover`, `transfer-spl`,
-  `social {set-config,initiate,finalize,cancel}` (requires `recover enable`
-  first), plus `--broadcast` flags on flows that fit legacy txs.
+  `social {set-config,initiate,finalize,cancel}` (`set-config` needs no recovery
+  flag; initiate/finalize/cancel require `recover enable` first), plus
+  `--broadcast` flags on flows that fit legacy txs.
 - [`scripts/demo-localnet.sh`](../scripts/demo-localnet.sh): one-shot keygen →
   init (`--out` JSON) → fund → transfer against `solana-test-validator`
   (`PROGRAM_ID` + `PAYER` required).

@@ -366,9 +366,13 @@ pub const ROTATE_FALCON_DATA_LEN: usize = 1
 const _: () = assert!(ROTATE_FALCON_DATA_LEN == 2279);
 
 /// Build `RotateEd25519Key` (discriminator 2). Payload shape matches Execute.
+///
+/// `recovery_config` is the RecoveryConfig PDA (may be uninitialized); a
+/// successful rotate clears social pending if the config exists.
 pub fn rotate_ed25519_instruction(
     program_id: &Pubkey,
     hybrid_account: &Pubkey,
+    recovery_config: &Pubkey,
     intent: &AuthorizationIntent,
     falcon_sig: &[u8],
 ) -> Result<Instruction> {
@@ -396,6 +400,7 @@ pub fn rotate_ed25519_instruction(
         program_id: *program_id,
         accounts: vec![
             AccountMeta::new(*hybrid_account, false),
+            AccountMeta::new(*recovery_config, false),
             AccountMeta::new_readonly(instructions_sysvar_id(), false),
         ],
         data,
@@ -498,21 +503,22 @@ pub fn change_policy_instruction(
 }
 
 /// Build `RecoverAccount` (discriminator 5). Payload shape matches Execute.
+///
+/// Enable/Disable use hybrid + sysvar. `RotateEd25519` also requires the
+/// RecoveryConfig PDA (`recovery_config`); pass `None` only for enable/disable.
 pub fn recover_account_instruction(
     program_id: &Pubkey,
     hybrid_account: &Pubkey,
     intent: &AuthorizationIntent,
     falcon_sig: &[u8],
+    recovery_config: Option<&Pubkey>,
 ) -> Result<Instruction> {
-    match intent.action {
-        dualkey_core::Action::RecoverAccount { .. } => {}
-        _ => {
-            return Err(ClientError::IntentFormat {
-                path: "recover_account".into(),
-                reason: "intent action must be RecoverAccount".into(),
-            });
-        }
-    }
+    let dualkey_core::Action::RecoverAccount { op, .. } = intent.action else {
+        return Err(ClientError::IntentFormat {
+            path: "recover_account".into(),
+            reason: "intent action must be RecoverAccount".into(),
+        });
+    };
     let mut data = Vec::with_capacity(EXECUTE_DATA_LEN);
     data.push(RECOVER_ACCOUNT_DISCRIMINATOR);
     data.extend_from_slice(&encode_execute_intent_wire(intent));
@@ -524,12 +530,30 @@ pub fn recover_account_instruction(
         });
     }
     data.extend_from_slice(falcon_sig);
+
+    let accounts = match op {
+        dualkey_core::RecoveryOp::RotateEd25519 => {
+            let recovery = recovery_config.ok_or_else(|| ClientError::IntentFormat {
+                path: "recovery_config".into(),
+                reason: "RecoverAccount RotateEd25519 requires recovery_config PDA".into(),
+            })?;
+            vec![
+                AccountMeta::new(*hybrid_account, false),
+                AccountMeta::new(*recovery, false),
+                AccountMeta::new_readonly(instructions_sysvar_id(), false),
+            ]
+        }
+        dualkey_core::RecoveryOp::Enable | dualkey_core::RecoveryOp::Disable => {
+            vec![
+                AccountMeta::new(*hybrid_account, false),
+                AccountMeta::new_readonly(instructions_sysvar_id(), false),
+            ]
+        }
+    };
+
     Ok(Instruction {
         program_id: *program_id,
-        accounts: vec![
-            AccountMeta::new(*hybrid_account, false),
-            AccountMeta::new_readonly(instructions_sysvar_id(), false),
-        ],
+        accounts,
         data,
     })
 }

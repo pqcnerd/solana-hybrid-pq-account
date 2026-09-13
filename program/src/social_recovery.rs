@@ -53,6 +53,34 @@ fn verify_recovery_config_pda(
     Ok(bump)
 }
 
+/// After an Ed25519 owner change: clear social pending if RecoveryConfig exists.
+///
+/// `recovery_config` must be the RecoveryConfig PDA. Empty/uninitialized is a
+/// no-op. If the account is owned by this program, pending is cleared so a
+/// later `FinalizeSocialRecovery` cannot overwrite the new owner.
+pub fn clear_pending_after_ed25519_owner_change(
+    program_id: &Pubkey,
+    hybrid_account: &Pubkey,
+    recovery_config: &AccountInfo,
+) -> Result<(), DualKeyError> {
+    verify_recovery_config_pda(program_id, hybrid_account, recovery_config.key)?;
+    if recovery_config.data_is_empty() {
+        return Ok(());
+    }
+    if recovery_config.owner != program_id {
+        return Err(DualKeyError::InvalidAccountData);
+    }
+    if !recovery_config.is_writable {
+        return Err(DualKeyError::InvalidAccountData);
+    }
+    let mut data = recovery_config
+        .try_borrow_mut_data()
+        .map_err(|_| DualKeyError::InvalidAccountData)?;
+    let mut cfg = RecoveryConfig::try_from_bytes(&mut data)?;
+    cfg.clear_pending();
+    Ok(())
+}
+
 struct RecoverySignerSeeds {
     hybrid: [u8; 32],
     bump: [u8; 1],
@@ -148,6 +176,9 @@ pub fn process_set_recovery_config(
         return Err(DualKeyError::UnsupportedAction);
     };
     if guardian_ed25519 == [0u8; 32] {
+        return Err(DualKeyError::InvalidAccountData);
+    }
+    if delay_slots < 1 {
         return Err(DualKeyError::InvalidAccountData);
     }
 
@@ -274,6 +305,10 @@ pub fn process_initiate_social_recovery(
         .try_borrow_mut_data()
         .map_err(|_| DualKeyError::InvalidAccountData)?;
     let mut cfg = RecoveryConfig::try_from_bytes(&mut cfg_data)?;
+    if cfg.has_pending() {
+        // Refuse re-initiate so a guardian cannot push pending_ready_slot forward.
+        return Err(DualKeyError::InvalidAccountData);
+    }
     let ready = clock
         .slot
         .checked_add(cfg.delay_slots())

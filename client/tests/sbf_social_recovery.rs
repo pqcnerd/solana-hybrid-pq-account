@@ -381,6 +381,59 @@ fn social_recovery_cancel_clears_pending() {
 }
 
 #[test]
+fn social_recovery_rejects_reinitiate_while_pending() {
+    let mut mollusk = mollusk();
+    mollusk.warp_to_slot(50);
+    let f = fixture(0, true);
+    let (ed_ix, set_ix) = set_config(&f);
+    let after_set = run_tx(
+        &mollusk,
+        &[ed_ix, set_ix],
+        &base_accounts(&f),
+        &[Check::success()],
+    );
+
+    let new_owner = Ed25519Keypair::generate();
+    let digest = social_recover_digest(
+        &CHAIN_DOMAIN_LOCALNET,
+        &program_id().to_bytes(),
+        &f.account.to_bytes(),
+        &new_owner.public_bytes(),
+        1,
+    );
+    let g_sig = f.guardian.signing_key().sign(&digest).to_bytes();
+    let g_ix = onchain::ed25519_precompile_instruction(&digest, &g_sig, &f.guardian.public_bytes());
+    let init_ix = onchain::initiate_social_recovery_instruction(
+        &program_id(),
+        &f.account,
+        &f.recovery_config,
+        &new_owner.public_bytes(),
+    );
+    let accounts: Vec<_> = after_set
+        .iter()
+        .cloned()
+        .chain(std::iter::once(
+            mollusk_svm::program::keyed_account_for_system_program(),
+        ))
+        .collect();
+    let after_init = run_tx(
+        &mollusk,
+        &[g_ix.clone(), init_ix.clone()],
+        &accounts,
+        &[Check::success()],
+    );
+
+    // Same guardian digest still valid (nonce unchanged); must not reset ready_slot.
+    mollusk.warp_to_slot(55);
+    run_tx(
+        &mollusk,
+        &[g_ix, init_ix],
+        &after_init,
+        &[custom(DualKeyError::InvalidAccountData)],
+    );
+}
+
+#[test]
 fn social_recovery_rejects_wrong_guardian() {
     let mut mollusk = mollusk();
     mollusk.warp_to_slot(1);
@@ -472,7 +525,7 @@ fn social_recovery_initiate_requires_recovery_flag() {
 
 #[test]
 fn falcon_only_recover_still_works_without_social_config() {
-    // Sanity: M12 path is independent of RecoveryConfig.
+    // Sanity: M12 path is independent of RecoveryConfig contents.
     let mollusk = mollusk();
     let f = fixture(3, true);
     let new_ed = Ed25519Keypair::generate();
@@ -488,12 +541,119 @@ fn falcon_only_recover_still_works_without_social_config() {
     );
     let digest = canonical_digest(&intent);
     let falcon = falcon_sig(&digest, &f.falcon_secret);
-    let ix =
-        onchain::recover_account_instruction(&program_id(), &f.account, &intent, &falcon).unwrap();
-    let after = run_tx(&mollusk, &[ix], &[hybrid_account(&f)], &[Check::success()]);
+    let ix = onchain::recover_account_instruction(
+        &program_id(),
+        &f.account,
+        &intent,
+        &falcon,
+        Some(&f.recovery_config),
+    )
+    .unwrap();
+    let after = run_tx(&mollusk, &[ix], &base_accounts(&f), &[Check::success()]);
     let hybrid = after.iter().find(|(k, _)| *k == f.account).unwrap();
     assert_eq!(
         HybridAccount::owner_ed25519_from_slice(&hybrid.1.data).unwrap(),
         new_ed.public_bytes()
+    );
+}
+
+#[test]
+fn falcon_recover_clears_social_pending_so_finalize_cannot_overwrite() {
+    let mut mollusk = mollusk();
+    mollusk.warp_to_slot(100);
+    let f = fixture(1, true);
+    let (ed_ix, set_ix) = set_config(&f);
+    let after_set = run_tx(
+        &mollusk,
+        &[ed_ix, set_ix],
+        &base_accounts(&f),
+        &[Check::success()],
+    );
+
+    let guardian_choice = Ed25519Keypair::generate();
+    let digest = social_recover_digest(
+        &CHAIN_DOMAIN_LOCALNET,
+        &program_id().to_bytes(),
+        &f.account.to_bytes(),
+        &guardian_choice.public_bytes(),
+        2,
+    );
+    let g_sig = f.guardian.signing_key().sign(&digest).to_bytes();
+    let g_ix = onchain::ed25519_precompile_instruction(&digest, &g_sig, &f.guardian.public_bytes());
+    let init_ix = onchain::initiate_social_recovery_instruction(
+        &program_id(),
+        &f.account,
+        &f.recovery_config,
+        &guardian_choice.public_bytes(),
+    );
+    let accounts_after_set: Vec<_> = after_set
+        .iter()
+        .cloned()
+        .chain(std::iter::once(
+            mollusk_svm::program::keyed_account_for_system_program(),
+        ))
+        .collect();
+    let after_init = run_tx(
+        &mollusk,
+        &[g_ix, init_ix],
+        &accounts_after_set,
+        &[Check::success()],
+    );
+
+    let recovered = Ed25519Keypair::generate();
+    let recover_intent = onchain::signing_intent(
+        &program_id(),
+        &f.account,
+        2,
+        50_000_000,
+        Action::RecoverAccount {
+            op: RecoveryOp::RotateEd25519,
+            new_ed25519: recovered.public_bytes(),
+        },
+    );
+    let r_digest = canonical_digest(&recover_intent);
+    let falcon = falcon_sig(&r_digest, &f.falcon_secret);
+    let recover_ix = onchain::recover_account_instruction(
+        &program_id(),
+        &f.account,
+        &recover_intent,
+        &falcon,
+        Some(&f.recovery_config),
+    )
+    .unwrap();
+    let after_recover = run_tx(&mollusk, &[recover_ix], &after_init, &[Check::success()]);
+
+    let cfg = after_recover
+        .iter()
+        .find(|(k, _)| *k == f.recovery_config)
+        .unwrap();
+    let mut cfg_data = cfg.1.data.clone();
+    assert!(!RecoveryConfig::try_from_bytes(&mut cfg_data)
+        .unwrap()
+        .has_pending());
+
+    let hybrid = after_recover.iter().find(|(k, _)| *k == f.account).unwrap();
+    assert_eq!(
+        HybridAccount::owner_ed25519_from_slice(&hybrid.1.data).unwrap(),
+        recovered.public_bytes()
+    );
+
+    mollusk.warp_to_slot(100 + DELAY_SLOTS);
+    let fin = onchain::finalize_social_recovery_instruction(
+        &program_id(),
+        &f.account,
+        &f.recovery_config,
+    );
+    run_tx(
+        &mollusk,
+        std::slice::from_ref(&fin),
+        &after_recover,
+        &[custom(DualKeyError::InvalidAccountData)],
+    );
+
+    let hybrid = after_recover.iter().find(|(k, _)| *k == f.account).unwrap();
+    assert_eq!(
+        HybridAccount::owner_ed25519_from_slice(&hybrid.1.data).unwrap(),
+        recovered.public_bytes()
     );
 }

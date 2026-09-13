@@ -117,6 +117,26 @@ fn hybrid_account(f: &Fixture) -> (Pubkey, Account) {
     )
 }
 
+fn empty_recovery_config(hybrid: &Pubkey) -> (Pubkey, Account) {
+    let (addr, _) = onchain::derive_recovery_config(&program_id(), hybrid).unwrap();
+    (
+        addr,
+        Account {
+            lamports: 1_000_000,
+            data: vec![],
+            owner: onchain::system_program_id(),
+            executable: false,
+            rent_epoch: 0,
+        },
+    )
+}
+
+fn recovery_pda(hybrid: &Pubkey) -> Pubkey {
+    onchain::derive_recovery_config(&program_id(), hybrid)
+        .unwrap()
+        .0
+}
+
 fn recipient_account() -> (Pubkey, Account) {
     (
         recipient_pubkey(),
@@ -297,14 +317,19 @@ fn falcon_for_privileged_rotate_rejects_ed25519_alone() {
     let ed_sig = f.ed.signing_key().sign(&digest).to_bytes();
 
     let ed_ix = onchain::ed25519_precompile_instruction(&digest, &ed_sig, &f.ed.public_bytes());
-    let rot_ix =
-        onchain::rotate_ed25519_instruction(&program_id(), &f.account, &intent, &zero_falcon())
-            .unwrap();
+    let rot_ix = onchain::rotate_ed25519_instruction(
+        &program_id(),
+        &f.account,
+        &recovery_pda(&f.account),
+        &intent,
+        &zero_falcon(),
+    )
+    .unwrap();
 
     run_tx(
         &mollusk,
         &[ed_ix, rot_ix],
-        &[hybrid_account(&f)],
+        &[hybrid_account(&f), empty_recovery_config(&f.account)],
         &[custom(DualKeyError::InvalidFalcon)],
     );
 }
@@ -326,13 +351,19 @@ fn falcon_for_privileged_rotate_with_falcon() {
     let digest = canonical_digest(&intent);
     let falcon = falcon_sig(&digest, &f.falcon_secret);
 
-    let rot_ix =
-        onchain::rotate_ed25519_instruction(&program_id(), &f.account, &intent, &falcon).unwrap();
+    let rot_ix = onchain::rotate_ed25519_instruction(
+        &program_id(),
+        &f.account,
+        &recovery_pda(&f.account),
+        &intent,
+        &falcon,
+    )
+    .unwrap();
 
     let after = run_tx_result(
         &mollusk,
         &[rot_ix],
-        &[hybrid_account(&f)],
+        &[hybrid_account(&f), empty_recovery_config(&f.account)],
         &[Check::success()],
     );
     assert_eq!(

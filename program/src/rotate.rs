@@ -10,7 +10,9 @@
 //! proof-of-possession: anyone who can authorize under the current policy can
 //! already move value.
 //!
-//! Accounts: HybridAccount (writable), instructions sysvar (readonly).
+//! Accounts: HybridAccount (writable), RecoveryConfig PDA (writable; may be
+//! empty), instructions sysvar (readonly). A successful rotate clears any
+//! social-recovery pending so finalize cannot overwrite the new owner.
 //!
 //! ## `RotateFalconKey` (discriminator 3)
 //!
@@ -38,6 +40,7 @@ use solana_pubkey::Pubkey;
 use crate::auth::falcon::verify_falcon_raw;
 use crate::authorize::{self, Authorization};
 use crate::hash::sha256;
+use crate::social_recovery;
 
 /// Payload after discriminator for `RotateEd25519Key` (same as Execute).
 pub const ROTATE_ED25519_PAYLOAD_LEN: usize = EXECUTE_INTENT_WIRE_LEN + FALCON_SIGNATURE_LEN;
@@ -66,7 +69,7 @@ pub fn process_rotate_ed25519(
         return Err(DualKeyError::MalformedInstructionData);
     }
 
-    let [hybrid_account, instructions_sysvar] = accounts else {
+    let [hybrid_account, recovery_config, instructions_sysvar] = accounts else {
         return Err(DualKeyError::MalformedInstructionData);
     };
     if !hybrid_account.is_writable {
@@ -98,6 +101,11 @@ pub fn process_rotate_ed25519(
     )?;
 
     apply_ed25519_rotation(hybrid_account, &new_pubkey, &auth)?;
+    social_recovery::clear_pending_after_ed25519_owner_change(
+        program_id,
+        hybrid_account.key,
+        recovery_config,
+    )?;
     msg!(
         "DualKey: RotateEd25519 OK ({}); nonce {} -> {}",
         auth.policy.name(),

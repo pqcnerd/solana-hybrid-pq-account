@@ -262,7 +262,8 @@ client/src/{main,keygen,sign,intent,onchain,submit,rpc,keys,error}.rs
 - No placeholder / fake verification functions.
 - Policy downgrades must be authorized under the stricter of current vs target
   policy (see threat model).
-- Falcon pubkey registration requires proof-of-possession (init / rotate).
+- Falcon pubkey registration: Prepare + hash at init; **proof-of-possession on
+  `RotateFalconKey` only** (not at Initialize).
 
 Terminology used throughout: **post-quantum**, **hybrid authorization**,
 **cryptographic agility**, **defense in depth**. DualKey does **not** claim

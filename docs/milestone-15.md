@@ -11,20 +11,21 @@ cancel under the current policy.
 | Field | Notes |
 |-------|--------|
 | `guardian_ed25519` | Single guardian |
-| `delay_slots` | Inclusive finalize wait |
+| `delay_slots` | Inclusive finalize wait; must be ≥ 1 |
 | `pending_new_ed25519` | Zero = none |
 | `pending_ready_slot` | Earliest finalize slot |
 
 Social paths require `FLAG_RECOVERY_ENABLED` **and** an initialized config.
 M12 Falcon-only `RecoverAccount::RotateEd25519` remains when social config is
-unset / unused.
+unset / unused. Any successful Ed25519 owner change (`RotateEd25519Key` or
+Falcon recover) clears social pending so finalize cannot overwrite.
 
 ## Instructions
 
 | Disc | Name | Auth |
 |------|------|------|
 | 6 | `SetRecoveryConfig` | DualKey; action tag **7**; body `guardian[32] ‖ delay u64` |
-| 7 | `InitiateSocialRecovery` | Guardian Ed25519 precompile over social digest; data `new_ed25519[32]` |
+| 7 | `InitiateSocialRecovery` | Guardian Ed25519 precompile over social digest; data `new_ed25519[32]`; rejected if pending already set |
 | 8 | `FinalizeSocialRecovery` | Permissionless after `Clock::slot >= pending_ready_slot` |
 | 9 | `CancelSocialRecovery` | DualKey; action tag **8**; clears pending |
 
@@ -34,7 +35,8 @@ Guardian digest: DualKey domain tag + `SOCIAL_RECOVER` + chain/program/account +
 ## Tests (`sbf_social_recovery.rs`)
 
 Set → initiate → too-early finalize fails → after delay succeeds; cancel;
-wrong guardian; flag required; Falcon-only recover still works.
+wrong guardian; flag required; re-initiate while pending rejected; Falcon-only
+recover still works; Falcon recover clears pending (finalize cannot overwrite).
 
 ## Non-goals
 
